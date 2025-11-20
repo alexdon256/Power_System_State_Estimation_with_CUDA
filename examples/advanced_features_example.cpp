@@ -165,7 +165,7 @@ int main() {
         // - Affects measurement functions (power flow equations)
         // - Must be accurately modeled for correct estimation
         // - Tap ratios can be estimated if treated as state variables
-        std::cout << "4. Transformer Tap Ratio Configuration...\n";
+        std::cout << "6. Transformer Tap Ratio Configuration...\n";
         std::cout << "   Configuring transformer branches with tap ratios...\n";
         
         // Get all branches and configure transformers
@@ -215,7 +215,7 @@ int main() {
         std::cout << "         Tap ratio ≠ 1.0 or phase shift ≠ 0.0 indicates a transformer\n\n";
         
         // ========================================================================
-        // STEP 6: PMU (Phasor Measurement Unit) Support
+        // STEP 7: PMU (Phasor Measurement Unit) Support
         // ========================================================================
         // PMUs provide synchronized phasor measurements (voltage and current phasors)
         // Advantages:
@@ -226,7 +226,7 @@ int main() {
         //
         // PMU data format: IEEE C37.118 (binary or CSV)
         // Measurements: Voltage phasor (V∠θ), current phasor (I∠φ), frequency
-        std::cout << "5. PMU Data Processing...\n";
+        std::cout << "7. PMU Data Processing...\n";
         try {
             // Parse PMU data file (IEEE C37.118 format)
             auto pmuFrames = sle::io::pmu::PMUParser::parseFromFile("pmu_data.bin");
@@ -244,7 +244,7 @@ int main() {
         std::cout << "\n";
         
         // ========================================================================
-        // STEP 7: Multi-Area State Estimation (3-Level Hierarchy)
+        // STEP 8: Multi-Area State Estimation (3-Level Hierarchy)
         // ========================================================================
         // Multi-area estimation divides large systems into hierarchical levels:
         //
