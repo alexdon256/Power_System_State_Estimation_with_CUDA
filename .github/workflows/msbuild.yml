@@ -112,7 +112,6 @@ jobs:
           -A x64 `
           -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} `
           -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
-          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/CudaToolchain.cmake" `
           -DCUDA_ARCH=sm_75 `
           -DBUILD_EXAMPLES=ON `
           -DBUILD_TESTS=ON `
