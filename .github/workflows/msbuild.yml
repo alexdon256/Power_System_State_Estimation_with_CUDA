@@ -65,15 +65,54 @@ jobs:
       with:
         cmake-version: '3.28'
     
+    - name: Patch CUDA host_config.h for VS2022 compatibility
+      shell: pwsh
+      run: |
+        # Patch CUDA host_config.h to allow VS2022 14.44+ (needed because compiler detection doesn't use CMAKE_CUDA_FLAGS)
+        $hostConfigPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\include\crt\host_config.h"
+        if (Test-Path $hostConfigPath) {
+          try {
+            # Read file content
+            $content = Get-Content $hostConfigPath -Raw -ErrorAction Stop
+            # Find and replace the version check error (line 153 typically)
+            # Pattern matches: #error: -- unsupported Microsoft Visual Studio version! Only the versions between 2017 and 2022 (inclusive) are supported!
+            $oldPattern = '#error\s*:\s*--\s*unsupported\s+Microsoft\s+Visual\s+Studio\s+version[^\n]*'
+            if ($content -match $oldPattern) {
+              $newContent = $content -replace $oldPattern, '#warning: VS version check disabled for CI compatibility (VS2022 14.44+)'
+              # Remove read-only attribute if present
+              $file = Get-Item $hostConfigPath -ErrorAction Stop
+              if ($file.IsReadOnly) {
+                $file.IsReadOnly = $false
+              }
+              # Write patched content
+              Set-Content $hostConfigPath -Value $newContent -NoNewline -ErrorAction Stop
+              Write-Host "Successfully patched CUDA host_config.h for VS2022 compatibility"
+            } else {
+              Write-Host "Warning: Could not find version check pattern in host_config.h (may already be patched)"
+            }
+          } catch {
+            Write-Host "Error patching host_config.h: $_"
+            Write-Host "Will rely on CMAKE_CUDA_FLAGS instead"
+          }
+        } else {
+          Write-Host "Warning: host_config.h not found at $hostConfigPath"
+        }
+    
     - name: Configure CMake
       shell: pwsh
+      env:
+        # Set CUDA flags as environment variable (backup method)
+        CMAKE_CUDA_FLAGS: "-allow-unsupported-compiler"
       run: |
         $buildDir = "build-${{ matrix.config.name }}"
         New-Item -ItemType Directory -Force -Path $buildDir
+        # Set CUDA flags via multiple methods for maximum compatibility
         cmake -S . -B $buildDir `
           -G "Visual Studio 17 2022" `
           -A x64 `
           -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} `
+          -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
+          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/CudaToolchain.cmake" `
           -DCUDA_ARCH=sm_75 `
           -DBUILD_EXAMPLES=ON `
           -DBUILD_TESTS=ON `

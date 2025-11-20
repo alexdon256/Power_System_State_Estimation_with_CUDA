@@ -1,4 +1,14 @@
 cmake_minimum_required(VERSION 3.18)
+
+# Allow unsupported compiler versions (needed for newer VS2022 with CUDA 11.8)
+# Must be set before project() so it applies during compiler detection
+# This is set via -DCMAKE_CUDA_FLAGS in the workflow, but ensure it's set here too
+if(CMAKE_CUDA_FLAGS)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler" CACHE STRING "CUDA compiler flags" FORCE)
+else()
+    set(CMAKE_CUDA_FLAGS "-allow-unsupported-compiler" CACHE STRING "CUDA compiler flags" FORCE)
+endif()
+
 project(SLE VERSION 1.0.0 LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -9,9 +19,6 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 # CUDA configuration
 enable_language(CUDA)
 find_package(CUDAToolkit REQUIRED)
-
-# Allow unsupported compiler versions (needed for newer VS2022 with CUDA 11.8)
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler")
 
 # Set CUDA architecture (user can override with -DCUDA_ARCH)
 if(NOT DEFINED CUDA_ARCH)
