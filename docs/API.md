@@ -4,7 +4,10 @@
 
 The State Estimation library provides a comprehensive API for power system state estimation with CUDA acceleration and real-time update capabilities.
 
+**Library Type:** The library is built as a **shared library (DLL on Windows, .so on Linux)** with all public APIs properly exported using the `SLE_API` macro. This ensures proper symbol visibility and allows dynamic linking.
+
 **Latest Updates:**
+- **Shared Library (DLL/.so)**: Project now builds as a DLL/shared library with proper symbol export
 - Convenience methods for easier usage (`configureForRealTime()`, `loadFromFiles()`, etc.)
 - Comparison reports for measured vs estimated values
 - 3-level multi-area hierarchy (Region → Area → Zone)

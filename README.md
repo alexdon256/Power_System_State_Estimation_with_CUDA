@@ -45,6 +45,14 @@ See [PERFORMANCE.md](docs/PERFORMANCE.md) for complete performance guide.
 - C++17 compatible compiler
 - NVIDIA GPU with compute capability 7.5 or higher
 
+## Library Type
+
+The project builds as a **shared library (DLL on Windows, .so on Linux)** with all public APIs properly exported. This allows:
+- Dynamic linking at runtime
+- Smaller executable sizes
+- Easier library updates without recompiling dependent applications
+- Proper symbol visibility on all platforms
+
 ## Building
 
 See [BUILD_CUDA.md](docs/BUILD_CUDA.md) for complete build instructions.

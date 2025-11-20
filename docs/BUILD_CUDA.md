@@ -118,15 +118,20 @@ make -j$(nproc)  # Use all CPU cores
 
 ```bash
 # Check if library was created
-ls -la lib/libSLE.a  # Linux/macOS
+# Shared library (DLL on Windows, .so on Linux)
+ls -la lib/libSLE.so*  # Linux (shared library)
+ls -la bin/libSLE.dll  # Windows (DLL)
 # or
-dir lib\SLE.lib       # Windows
+dir lib\SLE.lib         # Windows (import library)
+dir bin\SLE.dll         # Windows (DLL)
 
 # Run an example
 ./examples/basic_example  # Linux/macOS
 # or
 examples\basic_example.exe  # Windows
 ```
+
+**Note:** The project builds as a **shared library (DLL on Windows, .so on Linux)** by default. The DLL/.so file contains the actual code, while the .lib file (Windows) is the import library needed for linking.
 
 ## Platform-Specific Instructions
 
@@ -156,6 +161,7 @@ cmake --build . -j$(nproc)
 ```bash
 # Install CUDA Toolkit from NVIDIA website
 # Ensure Visual Studio 2017+ is installed
+# Note: VS2022 14.44+ requires -allow-unsupported-compiler flag (automatically set)
 
 # Open Developer Command Prompt for VS
 # Navigate to project
@@ -166,6 +172,10 @@ mkdir build
 cd build
 cmake .. -DCUDA_ARCH=sm_75 -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
+
+# Output files:
+# - bin/Release/SLE.dll (DLL - runtime)
+# - lib/Release/SLE.lib (import library - link time)
 ```
 
 ### macOS
@@ -271,9 +281,12 @@ brew install libomp
 
 ```bash
 # Verify CUDA libraries are linked
-ldd lib/libSLE.a | grep cuda  # Linux
-otool -L lib/libSLE.a | grep cuda  # macOS
+ldd lib/libSLE.so | grep cuda  # Linux (shared library)
+ldd bin/libSLE.dll | grep cuda  # Windows (DLL)
+otool -L lib/libSLE.dylib | grep cuda  # macOS (if applicable)
 ```
+
+**Note:** For shared libraries, use `ldd` (Linux) or `dumpbin /dependents` (Windows) to check dependencies.
 
 ### 2. Run Example
 
@@ -299,6 +312,33 @@ watch -n 1 nvidia-smi
 # - Process name
 ```
 
+## Library Type
+
+The project builds as a **shared library (DLL/.so)** by default, which allows:
+- Dynamic linking at runtime
+- Smaller executable sizes
+- Easier updates without recompiling dependent applications
+- Proper symbol export/import on Windows
+
+### Using the DLL/Shared Library
+
+**Windows:**
+- The DLL (`SLE.dll`) must be in the same directory as your executable or in the system PATH
+- Link against the import library (`SLE.lib`) during compilation
+- All public APIs are exported using `SLE_API` macro
+
+**Linux:**
+- The shared library (`libSLE.so`) must be in a library path (e.g., `/usr/local/lib` or set `LD_LIBRARY_PATH`)
+- Link against the shared library during compilation: `-lSLE`
+- All public APIs are exported with default visibility
+
+### Export Macros
+
+All public API classes and functions use the `SLE_API` macro for proper DLL export/import:
+- When building the library: symbols are exported (`__declspec(dllexport)`)
+- When using the library: symbols are imported (`__declspec(dllimport)`)
+- On Linux: uses `__attribute__((visibility("default")))`
+
 ## Build Configuration Reference
 
 ### CMake Variables
@@ -307,6 +347,7 @@ watch -n 1 nvidia-smi
 |----------|---------|-------------|
 | `CUDA_ARCH` | `sm_75` | CUDA compute capability |
 | `USE_CUSOLVER` | `ON` | Enable cuSOLVER |
+| `USE_OPENMP` | `ON` | Enable OpenMP for CPU parallelization |
 | `BUILD_EXAMPLES` | `ON` | Build examples |
 | `BUILD_TESTS` | `ON` | Build tests |
 
@@ -341,6 +382,41 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 
 # Debug build (with symbols)
 cmake .. -DCMAKE_BUILD_TYPE=Debug
+```
+
+## Linking Against the Library
+
+### Windows (MSVC)
+
+```cpp
+// In your CMakeLists.txt or project settings:
+target_link_libraries(your_target PRIVATE SLE)
+
+// The DLL (SLE.dll) must be:
+// - In the same directory as your executable, OR
+// - In a directory in your system PATH
+```
+
+### Linux
+
+```bash
+# Link against the shared library
+g++ your_app.cpp -lSLE -L/path/to/lib -I/path/to/include
+
+# Or set library path:
+export LD_LIBRARY_PATH=/path/to/lib:$LD_LIBRARY_PATH
+```
+
+### CMake Integration
+
+```cmake
+# Find the library (if installed)
+find_library(SLE_LIBRARY SLE PATHS ${CMAKE_PREFIX_PATH}/lib)
+find_path(SLE_INCLUDE_DIR sle/StateEstimator.h PATHS ${CMAKE_PREFIX_PATH}/include)
+
+# Link your target
+target_link_libraries(your_target PRIVATE ${SLE_LIBRARY})
+target_include_directories(your_target PRIVATE ${SLE_INCLUDE_DIR})
 ```
 
 ## Next Steps
