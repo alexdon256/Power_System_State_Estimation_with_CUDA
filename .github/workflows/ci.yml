@@ -131,6 +131,7 @@ jobs:
       with:
         name: linux-build-${{ matrix.config.name }}
         path: |
+          build-${{ matrix.config.name }}/lib/*.so*
           build-${{ matrix.config.name }}/lib/*.a
           build-${{ matrix.config.name }}/examples/*
         retention-days: 7
@@ -225,6 +226,7 @@ jobs:
         name: windows-build-${{ matrix.config.name }}
         path: |
           build-${{ matrix.config.name }}/lib/*.lib
+          build-${{ matrix.config.name }}/bin/*.dll
           build-${{ matrix.config.name }}/bin/*.exe
           build-${{ matrix.config.name }}/examples/*.exe
         retention-days: 7

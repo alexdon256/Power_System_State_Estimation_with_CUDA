@@ -145,6 +145,7 @@ jobs:
         name: windows-build-${{ matrix.config.name }}
         path: |
           build-${{ matrix.config.name }}/lib/*.lib
+          build-${{ matrix.config.name }}/bin/*.dll
           build-${{ matrix.config.name }}/bin/*.exe
           build-${{ matrix.config.name }}/examples/*.exe
         retention-days: 7

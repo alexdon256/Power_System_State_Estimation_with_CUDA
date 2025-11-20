@@ -89,8 +89,11 @@ set(CUDA_SOURCES
     src/cuda/CudaWeightedOps.cu
 )
 
-# Create library
-add_library(${PROJECT_NAME} STATIC ${SOURCES} ${CUDA_SOURCES})
+# Create library as shared (DLL)
+add_library(${PROJECT_NAME} SHARED ${SOURCES} ${CUDA_SOURCES})
+
+# Define export macro when building the DLL
+target_compile_definitions(${PROJECT_NAME} PRIVATE SLE_EXPORTS)
 
 # Set include directories for the library
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -137,7 +140,13 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 )
 
 # Install
-install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+install(TARGETS ${PROJECT_NAME}
+    EXPORT ${PROJECT_NAME}Targets
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+    INCLUDES DESTINATION include
+)
 install(DIRECTORY include/ DESTINATION include)
 
 # Tests
@@ -183,8 +192,12 @@ if(BUILD_DOCS)
     endif()
 endif()
 
-# Set library output
+# Set library output directories
 set_target_properties(${PROJECT_NAME} PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
 )
 
