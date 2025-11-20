@@ -7,6 +7,7 @@
 #ifndef SLE_INTERFACE_MEASUREMENTLOADER_H
 #define SLE_INTERFACE_MEASUREMENTLOADER_H
 
+#include <sle/Export.h>
 #include <sle/model/TelemetryData.h>
 #include <sle/model/NetworkModel.h>
 #include <sle/model/DeviceModel.h>
@@ -17,7 +18,7 @@
 namespace sle {
 namespace interface {
 
-class MeasurementLoader {
+class SLE_API MeasurementLoader {
 public:
     // Load telemetry data from file
     static std::unique_ptr<model::TelemetryData> loadTelemetry(

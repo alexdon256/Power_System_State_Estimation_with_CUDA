@@ -7,6 +7,7 @@
 #ifndef SLE_INTERFACE_RESULTS_H
 #define SLE_INTERFACE_RESULTS_H
 
+#include <sle/Export.h>
 #include <sle/model/StateVector.h>
 #include <sle/Types.h>
 #include <string>
@@ -18,7 +19,7 @@ namespace interface {
 
 struct StateEstimationResult;
 
-class Results {
+class SLE_API Results {
 public:
     Results();
     explicit Results(const StateEstimationResult& result);

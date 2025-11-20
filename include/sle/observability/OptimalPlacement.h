@@ -7,6 +7,7 @@
 #ifndef SLE_OBSERVABILITY_OPTIMALPLACEMENT_H
 #define SLE_OBSERVABILITY_OPTIMALPLACEMENT_H
 
+#include <sle/Export.h>
 #include <sle/model/NetworkModel.h>
 #include <sle/Types.h>
 #include <vector>
@@ -16,14 +17,14 @@
 namespace sle {
 namespace observability {
 
-struct MeasurementPlacement {
+struct SLE_API MeasurementPlacement {
     BusId busId;
     MeasurementType type;
     Real cost;
     int priority;
 };
 
-class OptimalPlacement {
+class SLE_API OptimalPlacement {
 public:
     OptimalPlacement();
     

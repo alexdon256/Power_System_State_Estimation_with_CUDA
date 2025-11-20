@@ -7,6 +7,7 @@
 #ifndef SLE_OBSERVABILITY_OBSERVABILITYANALYZER_H
 #define SLE_OBSERVABILITY_OBSERVABILITYANALYZER_H
 
+#include <sle/Export.h>
 #include <sle/model/NetworkModel.h>
 #include <sle/model/TelemetryData.h>
 #include <sle/Types.h>
@@ -16,13 +17,13 @@
 namespace sle {
 namespace observability {
 
-struct ObservableSubsystem {
+struct SLE_API ObservableSubsystem {
     std::set<BusId> buses;
     std::set<BranchId> branches;
     bool isObservable;
 };
 
-class ObservabilityAnalyzer {
+class SLE_API ObservabilityAnalyzer {
 public:
     ObservabilityAnalyzer();
     

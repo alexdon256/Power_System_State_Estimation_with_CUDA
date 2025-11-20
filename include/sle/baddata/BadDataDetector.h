@@ -7,6 +7,7 @@
 #ifndef SLE_BADDATA_BADDATADETECTOR_H
 #define SLE_BADDATA_BADDATADETECTOR_H
 
+#include <sle/Export.h>
 #include <sle/model/TelemetryData.h>
 #include <sle/model/StateVector.h>
 #include <sle/model/NetworkModel.h>
@@ -17,7 +18,7 @@
 namespace sle {
 namespace baddata {
 
-struct BadDataResult {
+struct SLE_API BadDataResult {
     std::vector<std::string> badDeviceIds;
     std::vector<Index> badMeasurementIndices;
     Real chiSquareStatistic;
@@ -25,7 +26,7 @@ struct BadDataResult {
     bool hasBadData;
 };
 
-class BadDataDetector {
+class SLE_API BadDataDetector {
 public:
     BadDataDetector();
     

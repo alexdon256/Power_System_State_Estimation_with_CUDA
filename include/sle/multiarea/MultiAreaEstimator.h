@@ -7,6 +7,7 @@
 #ifndef SLE_MULTIAREA_MULTIAREAESTIMATOR_H
 #define SLE_MULTIAREA_MULTIAREAESTIMATOR_H
 
+#include <sle/Export.h>
 #include <sle/model/NetworkModel.h>
 #include <sle/model/TelemetryData.h>
 #include <sle/interface/StateEstimator.h>
@@ -23,7 +24,7 @@ namespace multiarea {
 // Zone definition (lowest level: subdivisions within an area)
 // Zones are typically transmission zones, load zones, or operational subdivisions
 // within a control area. Used for fine-grained parallelization and organization.
-struct Zone {
+struct SLE_API Zone {
     std::string name;                    // Zone identifier (e.g., "Zone1", "NorthZone")
     std::string areaName;                // Parent area this zone belongs to
     std::set<BusId> buses;               // Buses in this zone
@@ -36,7 +37,7 @@ struct Zone {
 // Area definition (middle level: control areas, ISOs, RTOs)
 // Areas are typically independent system operators (ISOs) or control areas
 // within a region. Examples: PJM, NYISO, CAISO, ERCOT
-struct Area {
+struct SLE_API Area {
     std::string name;                    // Area identifier (e.g., "PJM", "NYISO")
     std::string regionName;              // Parent region this area belongs to (optional)
     std::set<BusId> buses;               // Buses in this area
@@ -50,7 +51,7 @@ struct Area {
 // Region definition (highest level: large-scale interconnections)
 // Regions are typically major power system interconnections spanning multiple
 // control areas. Examples: Eastern Interconnection, Western Interconnection
-struct Region {
+struct SLE_API Region {
     std::string name;                    // Region identifier (e.g., "Eastern", "Western")
     std::set<BusId> buses;              // All buses in the region
     std::set<BranchId> internalBranches; // Branches within the region
@@ -61,7 +62,7 @@ struct Region {
 };
 
 // Tie line measurement
-struct TieLineMeasurement {
+struct SLE_API TieLineMeasurement {
     BranchId branchId;
     BusId fromArea;
     BusId toArea;
@@ -70,7 +71,7 @@ struct TieLineMeasurement {
     Real stdDev;
 };
 
-class MultiAreaEstimator {
+class SLE_API MultiAreaEstimator {
 public:
     MultiAreaEstimator();
     
@@ -91,7 +92,7 @@ public:
     void setTieLineMeasurements(const std::vector<TieLineMeasurement>& measurements);
     
     // Run multi-area state estimation
-    struct MultiAreaResult {
+    struct SLE_API MultiAreaResult {
         bool converged;
         int totalIterations;
         std::map<std::string, interface::StateEstimationResult> areaResults;

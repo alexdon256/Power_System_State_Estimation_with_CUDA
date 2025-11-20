@@ -7,6 +7,7 @@
 #ifndef SLE_IO_OUTPUTFORMATTER_H
 #define SLE_IO_OUTPUTFORMATTER_H
 
+#include <sle/Export.h>
 #include <sle/interface/Results.h>
 #include <sle/model/StateVector.h>
 #include <string>
@@ -14,7 +15,7 @@
 namespace sle {
 namespace io {
 
-class OutputFormatter {
+class SLE_API OutputFormatter {
 public:
     // Format results to string
     static std::string formatJSON(const interface::Results& results);

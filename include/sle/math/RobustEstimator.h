@@ -7,6 +7,7 @@
 #ifndef SLE_MATH_ROBUSTESTIMATOR_H
 #define SLE_MATH_ROBUSTESTIMATOR_H
 
+#include <sle/Export.h>
 #include <sle/Types.h>
 #include <sle/model/NetworkModel.h>
 #include <sle/model/StateVector.h>
@@ -25,7 +26,7 @@ enum class RobustWeightFunction {
 };
 
 // Robust estimator configuration
-struct RobustEstimatorConfig {
+struct SLE_API RobustEstimatorConfig {
     RobustWeightFunction weightFunction = RobustWeightFunction::HUBER;
     Real tuningConstant = 1.345;  // Default for Huber
     Real tolerance = 1e-6;
@@ -33,7 +34,7 @@ struct RobustEstimatorConfig {
     bool useGPU = true;
 };
 
-class RobustEstimator {
+class SLE_API RobustEstimator {
 public:
     RobustEstimator();
     explicit RobustEstimator(const RobustEstimatorConfig& config);
@@ -43,7 +44,7 @@ public:
     const RobustEstimatorConfig& getConfig() const { return config_; }
     
     // Robust state estimation using M-estimators
-    struct RobustResult {
+    struct SLE_API RobustResult {
         bool converged;
         Index iterations;
         Real finalNorm;

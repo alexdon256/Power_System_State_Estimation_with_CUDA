@@ -7,6 +7,7 @@
 #ifndef SLE_INTERFACE_TELEMETRYPROCESSOR_H
 #define SLE_INTERFACE_TELEMETRYPROCESSOR_H
 
+#include <sle/Export.h>
 #include <sle/model/TelemetryData.h>
 #include <sle/model/MeasurementModel.h>
 #include <sle/Types.h>
@@ -22,7 +23,7 @@ namespace sle {
 namespace interface {
 
 // Real-time telemetry update
-struct TelemetryUpdate {
+struct SLE_API TelemetryUpdate {
     std::string deviceId;
     MeasurementType type;
     Real value;
@@ -33,7 +34,7 @@ struct TelemetryUpdate {
     int64_t timestamp;
 };
 
-class TelemetryProcessor {
+class SLE_API TelemetryProcessor {
 public:
     TelemetryProcessor();
     ~TelemetryProcessor();

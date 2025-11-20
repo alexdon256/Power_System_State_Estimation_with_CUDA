@@ -7,6 +7,7 @@
 #ifndef SLE_INTERFACE_MODELLOADER_H
 #define SLE_INTERFACE_MODELLOADER_H
 
+#include <sle/Export.h>
 #include <sle/model/NetworkModel.h>
 #include <string>
 #include <memory>
@@ -14,7 +15,7 @@
 namespace sle {
 namespace interface {
 
-class ModelLoader {
+class SLE_API ModelLoader {
 public:
     // Load from IEEE Common Format
     static std::unique_ptr<model::NetworkModel> loadFromIEEE(const std::string& filepath);

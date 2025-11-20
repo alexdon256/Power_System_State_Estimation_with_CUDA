@@ -7,6 +7,7 @@
 #ifndef SLE_MATH_LOADFLOW_H
 #define SLE_MATH_LOADFLOW_H
 
+#include <sle/Export.h>
 #include <sle/Types.h>
 #include <sle/model/NetworkModel.h>
 #include <sle/model/StateVector.h>
@@ -15,7 +16,7 @@
 namespace sle {
 namespace math {
 
-struct LoadFlowConfig {
+struct SLE_API LoadFlowConfig {
     Real tolerance = 1e-6;
     Index maxIterations = 100;
     Real accelerationFactor = 1.0;
@@ -23,7 +24,7 @@ struct LoadFlowConfig {
     bool useGPU = true;
 };
 
-struct LoadFlowResult {
+struct SLE_API LoadFlowResult {
     bool converged;
     Index iterations;
     Real finalMismatch;
@@ -32,7 +33,7 @@ struct LoadFlowResult {
     std::string message;
 };
 
-class LoadFlow {
+class SLE_API LoadFlow {
 public:
     LoadFlow();
     explicit LoadFlow(const LoadFlowConfig& config);

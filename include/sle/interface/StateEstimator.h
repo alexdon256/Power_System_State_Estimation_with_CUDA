@@ -7,6 +7,7 @@
 #ifndef SLE_INTERFACE_STATEESTIMATOR_H
 #define SLE_INTERFACE_STATEESTIMATOR_H
 
+#include <sle/Export.h>
 #include <sle/model/NetworkModel.h>
 #include <sle/model/TelemetryData.h>
 #include <sle/model/StateVector.h>
@@ -19,7 +20,7 @@
 namespace sle {
 namespace interface {
 
-struct StateEstimationResult {
+struct SLE_API StateEstimationResult {
     bool converged;
     int iterations;
     double finalNorm;
@@ -29,7 +30,7 @@ struct StateEstimationResult {
     int64_t timestamp;
 };
 
-class StateEstimator {
+class SLE_API StateEstimator {
 public:
     StateEstimator();
     ~StateEstimator();

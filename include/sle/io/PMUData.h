@@ -7,6 +7,7 @@
 #ifndef SLE_IO_PMUDATA_H
 #define SLE_IO_PMUDATA_H
 
+#include <sle/Export.h>
 #include <sle/Types.h>
 #include <cstdint>
 #include <vector>
@@ -18,7 +19,7 @@ namespace io {
 namespace pmu {
 
 // C37.118 Data Frame Structure
-struct PMUFrame {
+struct SLE_API PMUFrame {
     uint16_t sync;           // Sync word (0xAA11)
     uint16_t frameSize;      // Frame size in bytes
     uint16_t idCode;         // PMU ID code
@@ -39,7 +40,7 @@ struct PMUFrame {
 };
 
 // PMU Configuration Frame
-struct PMUConfig {
+struct SLE_API PMUConfig {
     uint16_t idCode;
     std::string stationName;
     uint16_t dataFormat;
@@ -54,7 +55,7 @@ struct PMUConfig {
 };
 
 // PMU Measurement Data
-struct PMUMeasurement {
+struct SLE_API PMUMeasurement {
     int64_t timestamp;       // Timestamp in microseconds
     BusId busId;             // Associated bus ID
     Complex voltagePhasor;   // Voltage phasor (magnitude, angle)
@@ -65,7 +66,7 @@ struct PMUMeasurement {
     bool valid;              // Data validity flag
 };
 
-class PMUParser {
+class SLE_API PMUParser {
 public:
     // Parse C37.118 data frame
     static bool parseDataFrame(const uint8_t* buffer, size_t length, PMUFrame& frame);
