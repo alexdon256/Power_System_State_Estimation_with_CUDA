@@ -5,6 +5,8 @@ A comprehensive C/C++ CUDA-accelerated power system State Estimation program tha
 ## Features
 
 - **State Estimation**: Weighted Least Squares (WLS) with Newton-Raphson iterative solver
+- **Power Estimation**: Active and reactive power injection and flow measurements
+- **Current Estimation**: Current magnitude and phasor measurements (including PMU support)
 - **Robust Estimation**: M-estimators (Huber, Bi-square, Cauchy, Welsch) for bad data handling
 - **Load Flow Integration**: Newton-Raphson load flow solver
 - **CUDA Acceleration**: GPU-accelerated parallel computation with optimized kernels

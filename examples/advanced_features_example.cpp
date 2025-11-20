@@ -128,7 +128,29 @@ int main() {
         std::cout << "\n";
         
         // ========================================================================
-        // STEP 5: Transformer Tap Ratio Configuration
+        // STEP 5: Current and Power Measurements
+        // ========================================================================
+        // The library supports comprehensive power and current measurements:
+        // 
+        // Power Measurements:
+        // - P_INJECTION, Q_INJECTION: Net power at buses (generation - load)
+        // - P_FLOW, Q_FLOW: Power flow on transmission lines/transformers
+        //
+        // Current Measurements:
+        // - I_MAGNITUDE: Current magnitude from current transformers (CTs)
+        //   Format in CSV: I_MAGNITUDE,CT_001,1,2,0.25,0.02
+        //                  (Type,DeviceId,BusId,FromBus,ToBus,Value,StdDev)
+        // - I_PHASOR: Current phasor from PMUs (magnitude and angle)
+        //
+        // All measurement types are automatically processed during state estimation
+        std::cout << "5. Current and Power Measurements...\n";
+        std::cout << "   Supported measurement types:\n";
+        std::cout << "   - Power: P_INJECTION, Q_INJECTION, P_FLOW, Q_FLOW\n";
+        std::cout << "   - Current: I_MAGNITUDE, I_PHASOR (PMU)\n";
+        std::cout << "   - Voltage: V_MAGNITUDE, V_PHASOR (PMU)\n\n";
+        
+        // ========================================================================
+        // STEP 6: Transformer Tap Ratio Configuration
         // ========================================================================
         // Transformers require accurate modeling with tap ratios and phase shifts
         // Tap ratio: Voltage transformation ratio (V_to = tap × V_from)

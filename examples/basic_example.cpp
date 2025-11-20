@@ -53,10 +53,11 @@ int main() {
         // - Power injections: Active (P) and reactive (Q) power at buses
         // - Power flows: Active and reactive power on branches
         // - Voltage magnitudes: Bus voltage measurements
+        // - Current magnitudes: Branch current measurements (from current transformers)
         // - PMU phasors: Synchronized voltage and current phasors (if available)
         //
         // Each measurement includes:
-        // - Value: The measured quantity (MW, MVAR, p.u., etc.)
+        // - Value: The measured quantity (MW, MVAR, p.u., Amperes, etc.)
         // - Standard deviation: Measurement uncertainty (used for weighting)
         // - Device ID: Identifier of the measuring device
         // - Location: Bus or branch where measurement is taken

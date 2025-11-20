@@ -374,6 +374,80 @@ auto result = loadflow.solve(network);
 estimator.setInitialState(*result.state);
 ```
 
+## Power and Current Measurements
+
+The library supports comprehensive power and current measurement types for state estimation:
+
+### Power Measurements
+
+**Power Injections** (at buses):
+- `P_INJECTION`: Active power injection (MW or p.u.)
+- `Q_INJECTION`: Reactive power injection (MVAR or p.u.)
+- Used to measure net power at buses (generation - load)
+
+**Power Flows** (on branches):
+- `P_FLOW`: Active power flow (MW or p.u.)
+- `Q_FLOW`: Reactive power flow (MVAR or p.u.)
+- Used to measure power flow on transmission lines and transformers
+
+```cpp
+// Power measurements are automatically loaded from CSV files
+// Format in measurements.csv:
+// P_INJECTION,METER_001,2,-1,-1,40.0,0.1
+// P_FLOW,FLOW_001,1,2,0.5,0.05
+// Q_FLOW,FLOW_002,1,2,0.3,0.05
+
+// Power measurements are used in the measurement function h(x):
+// - P_INJECTION: h(x) = Σ(P_flow_in) - Σ(P_flow_out) + P_gen - P_load
+// - Q_INJECTION: h(x) = Σ(Q_flow_in) - Σ(Q_flow_out) + Q_gen - Q_load
+// - P_FLOW: h(x) = V_from² * G / tap² - V_from * V_to * (G*cos(θ_diff) + B*sin(θ_diff)) / tap
+// - Q_FLOW: h(x) = -V_from² * B / tap² - V_from * V_to * (G*sin(θ_diff) - B*cos(θ_diff)) / tap
+```
+
+### Current Measurements
+
+**Current Magnitude** (`I_MAGNITUDE`):
+- Measured current magnitude on branches (Amperes or p.u.)
+- Typically from current transformers (CTs) on transmission lines
+- Provides additional redundancy for power flow estimation
+
+**Current Phasor** (`I_PHASOR`):
+- Synchronized current phasor from PMUs (magnitude and angle)
+- High accuracy, synchronized measurements
+- Provides both magnitude and phase angle information
+
+```cpp
+// Current magnitude measurements in CSV format:
+// I_MAGNITUDE,CT_001,1,2,0.25,0.02
+// Format: Type,DeviceId,BusId,FromBus,ToBus,Value,StdDev
+//         - FromBus/ToBus: Branch endpoints for current measurement
+//         - Value: Current magnitude in p.u. or Amperes
+//         - StdDev: Measurement uncertainty (typically 0.01-0.05 p.u.)
+
+// Current phasor from PMU:
+#include <sle/io/PMUData.h>
+auto frames = sle::io::pmu::PMUParser::parseFromFile("pmu_data.bin");
+auto measurement = sle::io::pmu::PMUParser::convertToMeasurement(frames[0], busId);
+// measurement.type will be I_PHASOR for current phasor measurements
+
+// Current measurements are used in the measurement function h(x):
+// - I_MAGNITUDE: h(x) = |I| = |(P + jQ) / (V * e^(jθ))|
+// - I_PHASOR: h(x) = I = (P + jQ) / (V * e^(jθ))  (complex current)
+```
+
+### Measurement Types Summary
+
+| Type | Location | Units | Typical StdDev | Use Case |
+|------|----------|-------|----------------|----------|
+| `P_INJECTION` | Bus | MW, p.u. | 0.01-0.05 | Net active power at bus |
+| `Q_INJECTION` | Bus | MVAR, p.u. | 0.01-0.05 | Net reactive power at bus |
+| `P_FLOW` | Branch | MW, p.u. | 0.01-0.05 | Active power flow on line |
+| `Q_FLOW` | Branch | MVAR, p.u. | 0.01-0.05 | Reactive power flow on line |
+| `I_MAGNITUDE` | Branch | A, p.u. | 0.01-0.05 | Current magnitude on line |
+| `I_PHASOR` | Bus/Branch | p.u. (complex) | 0.0001-0.001 | PMU current phasor |
+| `V_MAGNITUDE` | Bus | p.u., kV | 0.001-0.01 | Bus voltage magnitude |
+| `V_PHASOR` | Bus | p.u. (complex) | 0.0001-0.001 | PMU voltage phasor |
+
 ## PMU Support
 
 ```cpp

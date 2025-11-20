@@ -9,11 +9,14 @@
 - ✅ Robust estimation (M-estimators: Huber, Bi-square, Cauchy, Welsch)
 
 ### Measurement Support
-- ✅ Power flow (P/Q)
-- ✅ Power injection (P/Q)
-- ✅ Voltage magnitude
-- ✅ Current magnitude
-- ✅ PMU phasors (C37.118 full implementation)
+- ✅ **Power Measurements**:
+  - Power flow (P_FLOW, Q_FLOW) on branches
+  - Power injection (P_INJECTION, Q_INJECTION) at buses
+- ✅ **Current Measurements**:
+  - Current magnitude (I_MAGNITUDE) from current transformers
+  - Current phasor (I_PHASOR) from PMUs
+- ✅ Voltage magnitude (V_MAGNITUDE)
+- ✅ PMU phasors (C37.118 full implementation: V_PHASOR, I_PHASOR)
 - ✅ Virtual measurements (zero injection)
 - ✅ Pseudo measurements (forecasts)
 
