@@ -1,4 +1,4 @@
-name: Windows Build (MSBuild)
+name: CI
 
 on:
   push:
@@ -8,7 +8,90 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  linux-build:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        config:
+          - name: Release
+            build_type: Release
+          - name: Debug
+            build_type: Debug
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install CUDA
+      uses: Jimver/cuda-toolkit@v0.2.11
+      with:
+        cuda: '11.8.0'
+    
+    - name: Verify CUDA
+      run: |
+        nvcc --version
+        # nvidia-smi may not be available (check if command exists)
+        if command -v nvidia-smi &> /dev/null; then
+          nvidia-smi
+        else
+          echo "nvidia-smi not available (expected on some CI runners)"
+          echo "CUDA compilation will work, but GPU execution requires physical GPU"
+        fi
+    
+    - name: Install CMake
+      uses: jwlawson/actions-setup-cmake@v1.14
+      with:
+        cmake-version: '3.28'
+    
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libomp-dev
+    
+    - name: Configure CMake
+      run: |
+        mkdir -p build-${{ matrix.config.name }}
+        cd build-${{ matrix.config.name }}
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} \
+          -DCUDA_ARCH=sm_75 \
+          -DBUILD_EXAMPLES=ON \
+          -DBUILD_TESTS=ON \
+          -DUSE_CUSOLVER=ON \
+          -DUSE_OPENMP=ON
+    
+    - name: Build
+      run: |
+        cd build-${{ matrix.config.name }}
+        cmake --build . --parallel $(nproc)
+    
+    - name: Test
+      working-directory: build-${{ matrix.config.name }}
+      run: |
+        ctest --output-on-failure
+      continue-on-error: true
+    
+    - name: Build Documentation
+      run: |
+        cd build-${{ matrix.config.name }}
+        cmake .. -DBUILD_DOCS=ON
+        cmake --build . --target docs
+      continue-on-error: true
+    
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      if: matrix.config.name == 'Release'
+      with:
+        name: linux-build-${{ matrix.config.name }}
+        path: |
+          build-${{ matrix.config.name }}/lib/*.a
+          build-${{ matrix.config.name }}/examples/*
+        retention-days: 7
+
+  windows-build:
     runs-on: windows-latest
     
     strategy:
@@ -47,12 +130,11 @@ jobs:
         echo "CUDA_PATH=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     
-    - name: Verify CUDA Installation
+    - name: Verify CUDA
       shell: pwsh
       run: |
         nvcc --version
         # nvidia-smi may not be available on GitHub Actions Windows runners (no GPU)
-        # CUDA toolkit is installed for compilation, but GPU execution won't work
         if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
           nvidia-smi
         } else {
@@ -77,8 +159,7 @@ jobs:
           -DCUDA_ARCH=sm_75 `
           -DBUILD_EXAMPLES=ON `
           -DBUILD_TESTS=ON `
-          -DUSE_CUSOLVER=ON `
-          -DUSE_OPENMP=ON
+          -DUSE_CUSOLVER=ON
     
     - name: Build
       shell: pwsh
@@ -93,13 +174,6 @@ jobs:
         ctest -C ${{ matrix.config.build_type }} --output-on-failure
       continue-on-error: true
     
-    - name: Build Documentation
-      shell: pwsh
-      run: |
-        $buildDir = "build-${{ matrix.config.name }}"
-        cmake --build $buildDir --target docs --config ${{ matrix.config.build_type }}
-      continue-on-error: true
-    
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       if: matrix.config.name == 'Release'
@@ -110,13 +184,4 @@ jobs:
           build-${{ matrix.config.name }}/bin/*.exe
           build-${{ matrix.config.name }}/examples/*.exe
         retention-days: 7
-    
-    - name: Upload Documentation
-      uses: actions/upload-artifact@v4
-      if: matrix.config.name == 'Release'
-      with:
-        name: windows-docs
-        path: build-${{ matrix.config.name }}/docs/doxygen/html
-        retention-days: 7
-      continue-on-error: true
 

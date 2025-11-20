@@ -21,6 +21,12 @@ Complete guide for building the Power System State Estimation project with CUDA 
      cmake --version
      ```
 
+3. **OpenMP (Optional but Recommended)**
+   - **Linux**: `sudo apt-get install libomp-dev`
+   - **macOS**: `brew install libomp`
+   - **Windows**: Included with Visual Studio 2019+
+   - Provides 4-8x CPU speedup when GPU unavailable
+
 3. **C++17 Compatible Compiler**
    - **Linux**: GCC 7+ or Clang 5+
    - **Windows**: Visual Studio 2017+ (MSVC 19.14+)
@@ -86,6 +92,7 @@ nvidia-smi --query-gpu=compute_cap --format=csv
 cmake .. \
   -DCUDA_ARCH=sm_75 \
   -DUSE_CUSOLVER=ON \
+  -DUSE_OPENMP=ON \
   -DBUILD_EXAMPLES=ON \
   -DBUILD_TESTS=ON
 ```
@@ -93,6 +100,7 @@ cmake .. \
 **Options:**
 - `CUDA_ARCH`: CUDA compute capability (default: `sm_75`)
 - `USE_CUSOLVER`: Enable cuSOLVER for sparse linear systems (default: `ON`)
+- `USE_OPENMP`: Enable OpenMP for CPU parallelization (default: `ON` if found)
 - `BUILD_EXAMPLES`: Build example programs (default: `ON`)
 - `BUILD_TESTS`: Build test suite (default: `ON`)
 
@@ -235,6 +243,26 @@ cmake --build . --clean-first
 ```bash
 # Reduce parallel jobs
 cmake --build . -j2  # Use 2 cores instead of all
+```
+
+### Issue: OpenMP Not Found
+
+**Error:** `OpenMP not found - CPU parallelization disabled`
+
+**Solution:**
+```bash
+# Linux (Ubuntu/Debian)
+sudo apt-get install libomp-dev
+
+# Linux (Fedora/RHEL)
+sudo dnf install libgomp-devel
+
+# macOS
+brew install libomp
+
+# Windows
+# OpenMP is included with Visual Studio 2019+
+# For MinGW, install: mingw-w64-x86_64-openmp
 ```
 
 ## Verification

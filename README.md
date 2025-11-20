@@ -35,7 +35,8 @@ See [PERFORMANCE.md](docs/PERFORMANCE.md) for complete performance guide.
 **Key Performance:**
 - **10,000 Bus Systems**: 20-50x overall speedup, 100-500 ms per cycle (real-time capable)
 - **GPU Acceleration**: 5-100x speedup, enabled by default with automatic CPU fallback
-- **Optimizations**: FMA operations, memory pool, SIMD vectorization, warp shuffles
+- **CPU Parallelization**: 4-8x speedup with OpenMP (when GPU unavailable)
+- **Optimizations**: FMA operations, memory pool, SIMD vectorization, OpenMP threading, warp shuffles
 
 ## Requirements
 

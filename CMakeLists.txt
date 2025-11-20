@@ -22,6 +22,7 @@ option(BUILD_TESTS "Build test suite" ON)
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_DOCS "Build Doxygen documentation" OFF)
 option(USE_CUSOLVER "Use cuSOLVER for sparse linear systems" ON)
+option(USE_OPENMP "Use OpenMP for CPU parallelization" ON)
 
 # Include directories (for backward compatibility)
 include_directories(${CMAKE_SOURCE_DIR}/include)
@@ -99,6 +100,22 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 if(USE_CUSOLVER)
     target_link_libraries(${PROJECT_NAME} PRIVATE CUDA::cusolver)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUSOLVER)
+endif()
+
+# OpenMP support for CPU parallelization
+if(USE_OPENMP)
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+        target_compile_options(${PROJECT_NAME} PRIVATE 
+            $<$<COMPILE_LANGUAGE:CXX>:${OpenMP_CXX_FLAGS}>
+        )
+        target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OPENMP)
+        message(STATUS "OpenMP found: ${OpenMP_CXX_VERSION}")
+    else()
+        message(WARNING "OpenMP not found - CPU parallelization disabled")
+        message(WARNING "Install OpenMP: sudo apt-get install libomp-dev (Linux) or brew install libomp (macOS)")
+    endif()
 endif()
 
 # Compiler flags

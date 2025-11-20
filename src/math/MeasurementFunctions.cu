@@ -73,7 +73,11 @@ void MeasurementFunctions::evaluate(const StateVector& state,
     const auto& angles = state.getAngles();
     const auto& magnitudes = state.getMagnitudes();
     
-    // Vectorized loop where possible (compiler can optimize)
+    // Parallel evaluation - each measurement is independent (CPU fallback only)
+    // Thread-safe: read-only access to network, state, and measurements
+    #ifdef USE_OPENMP
+    #pragma omp parallel for schedule(static)
+    #endif
     for (size_t i = 0; i < nMeas; ++i) {
         const auto& meas = measurements[i];
         const BusId busId = meas->getLocation();
@@ -136,8 +140,12 @@ void MeasurementFunctions::computeResidual(const std::vector<Real>& z,
     residual.reserve(n);
     residual.resize(n);
     
-    // Vectorized subtraction (compiler can optimize with SIMD)
+    // Parallel vectorized subtraction (combines multi-threading with SIMD)
+    #ifdef USE_OPENMP
+    #pragma omp parallel for simd schedule(static)
+    #else
     #pragma omp simd
+    #endif
     for (size_t i = 0; i < n; ++i) {
         residual[i] = z[i] - hx[i];
     }

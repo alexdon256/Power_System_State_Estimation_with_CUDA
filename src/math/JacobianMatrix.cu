@@ -90,6 +90,8 @@ void JacobianMatrix::buildStructure(const NetworkModel& network,
 void JacobianMatrix::build(const StateVector& state,
                           const NetworkModel& network,
                           const TelemetryData& telemetry) {
+    // Use GPU if available, otherwise CPU fallback
+    // For now, always use GPU path (which has CPU fallback internally)
     buildGPU(state, network, telemetry);
 }
 
