@@ -165,9 +165,7 @@ jobs:
         $buildDir = "build-${{ matrix.config.name }}"
         New-Item -ItemType Directory -Force -Path $buildDir
         # Set CUDA flags via multiple methods for maximum compatibility
-        # Use toolchain file to set flags before compiler detection
         cmake -S . -B $buildDir `
-          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/CudaVS2022Fix.cmake" `
           -G "Visual Studio 17 2022" `
           -A x64 `
           -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} `
