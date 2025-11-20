@@ -48,14 +48,6 @@ See [PERFORMANCE.md](docs/PERFORMANCE.md) for complete performance guide.
 
 See [BUILD_CUDA.md](docs/BUILD_CUDA.md) for complete build instructions.
 
-**Quick Start:**
-```bash
-mkdir build
-cd build
-cmake .. -DCUDA_ARCH=sm_75  # Adjust for your GPU (see BUILD_CUDA.md)
-cmake --build .
-```
-
 ## Usage
 
 ### Basic State Estimation
