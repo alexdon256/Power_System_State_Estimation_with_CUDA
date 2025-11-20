@@ -10,6 +10,9 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 enable_language(CUDA)
 find_package(CUDAToolkit REQUIRED)
 
+# Allow unsupported compiler versions (needed for newer VS2022 with CUDA 11.8)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler")
+
 # Set CUDA architecture (user can override with -DCUDA_ARCH)
 if(NOT DEFINED CUDA_ARCH)
     set(CUDA_ARCH "sm_75" CACHE STRING "CUDA architecture")
@@ -120,6 +123,7 @@ endif()
 
 # Compiler flags
 target_compile_options(${PROJECT_NAME} PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-allow-unsupported-compiler>
     $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler -Wall -Wextra>
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>
     $<$<COMPILE_LANGUAGE:CXX>:-O3>  # Enable optimizations
