@@ -1,0 +1,81 @@
+/*
+ * Copyright (c) 2024 AlexD Oleksandr Don
+ * 
+ * Power System State Estimation with CUDA
+ */
+
+#ifndef SLE_BADDATA_BADDATADETECTOR_H
+#define SLE_BADDATA_BADDATADETECTOR_H
+
+#include <sle/model/TelemetryData.h>
+#include <sle/model/StateVector.h>
+#include <sle/model/NetworkModel.h>
+#include <sle/Types.h>
+#include <vector>
+#include <string>
+
+namespace sle {
+namespace baddata {
+
+struct BadDataResult {
+    std::vector<std::string> badDeviceIds;
+    std::vector<Index> badMeasurementIndices;
+    Real chiSquareStatistic;
+    Real chiSquareThreshold;
+    bool hasBadData;
+};
+
+class BadDataDetector {
+public:
+    BadDataDetector();
+    
+    // Chi-square test for bad data detection
+    BadDataResult detectBadDataChiSquare(
+        const model::TelemetryData& telemetry,
+        const model::StateVector& state,
+        const model::NetworkModel& network);
+    
+    // Largest normalized residual test
+    BadDataResult detectBadDataLNR(
+        const model::TelemetryData& telemetry,
+        const model::StateVector& state,
+        const model::NetworkModel& network);
+    
+    // Combined detection method
+    BadDataResult detectBadData(
+        const model::TelemetryData& telemetry,
+        const model::StateVector& state,
+        const model::NetworkModel& network);
+    
+    // Remove bad measurements
+    void removeBadMeasurements(model::TelemetryData& telemetry,
+                               const BadDataResult& result);
+    
+    // Set threshold for normalized residual
+    void setNormalizedResidualThreshold(Real threshold) {
+        normalizedResidualThreshold_ = threshold;
+    }
+    
+    Real getNormalizedResidualThreshold() const {
+        return normalizedResidualThreshold_;
+    }
+    
+private:
+    Real normalizedResidualThreshold_;
+    
+    // Compute normalized residuals
+    std::vector<Real> computeNormalizedResiduals(
+        const model::TelemetryData& telemetry,
+        const model::StateVector& state,
+        const model::NetworkModel& network);
+    
+    // Compute chi-square statistic
+    Real computeChiSquare(const std::vector<Real>& residuals,
+                         const std::vector<Real>& weights);
+};
+
+} // namespace baddata
+} // namespace sle
+
+#endif // SLE_BADDATA_BADDATADETECTOR_H
+

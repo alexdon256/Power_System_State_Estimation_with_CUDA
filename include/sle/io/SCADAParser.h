@@ -1,0 +1,26 @@
+/*
+ * Copyright (c) 2024 AlexD Oleksandr Don
+ * 
+ * Power System State Estimation with CUDA
+ */
+
+#ifndef SLE_IO_SCADAPARSER_H
+#define SLE_IO_SCADAPARSER_H
+
+#include <sle/model/TelemetryData.h>
+#include <string>
+#include <memory>
+
+namespace sle {
+namespace io {
+
+class SCADAParser {
+public:
+    static std::unique_ptr<model::TelemetryData> parse(const std::string& filepath);
+};
+
+} // namespace io
+} // namespace sle
+
+#endif // SLE_IO_SCADAPARSER_H
+

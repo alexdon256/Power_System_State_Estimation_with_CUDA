@@ -1,0 +1,62 @@
+/*
+ * Copyright (c) 2024 AlexD Oleksandr Don
+ * 
+ * Power System State Estimation with CUDA
+ */
+
+#ifndef SLE_MODEL_BRANCH_H
+#define SLE_MODEL_BRANCH_H
+
+#include <sle/Types.h>
+#include <memory>
+
+namespace sle {
+namespace model {
+
+class Branch {
+public:
+    Branch(BranchId id, BusId fromBus, BusId toBus);
+    
+    BranchId getId() const { return id_; }
+    BusId getFromBus() const { return fromBus_; }
+    BusId getToBus() const { return toBus_; }
+    
+    void setImpedance(Real r, Real x);
+    Real getR() const { return r_; }
+    Real getX() const { return x_; }
+    
+    void setCharging(Real b) { b_ = b; }
+    Real getB() const { return b_; }
+    
+    void setRating(Real mvaRating) { mvaRating_ = mvaRating; }
+    Real getRating() const { return mvaRating_; }
+    
+    void setTapRatio(Real tap) { tapRatio_ = tap; }
+    Real getTapRatio() const { return tapRatio_; }
+    
+    void setPhaseShift(Real shift) { phaseShift_ = shift; }
+    Real getPhaseShift() const { return phaseShift_; }
+    
+    bool isTransformer() const { return std::abs(tapRatio_ - 1.0) > 1e-6 || std::abs(phaseShift_) > 1e-6; }
+    
+    Complex getAdmittance() const;
+    
+private:
+    BranchId id_;
+    BusId fromBus_;
+    BusId toBus_;
+    
+    Real r_;           // Resistance (p.u.)
+    Real x_;           // Reactance (p.u.)
+    Real b_;           // Charging susceptance (p.u.)
+    Real mvaRating_;   // MVA rating
+    
+    Real tapRatio_;    // Transformer tap ratio (1.0 for lines)
+    Real phaseShift_;  // Phase shift angle (radians)
+};
+
+} // namespace model
+} // namespace sle
+
+#endif // SLE_MODEL_BRANCH_H
+
