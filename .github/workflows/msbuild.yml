@@ -72,30 +72,87 @@ jobs:
         $hostConfigPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\include\crt\host_config.h"
         if (Test-Path $hostConfigPath) {
           try {
+            Write-Host "Reading host_config.h from: $hostConfigPath"
             # Read file content
             $content = Get-Content $hostConfigPath -Raw -ErrorAction Stop
-            # Find and replace the version check error (line 153 typically)
-            # Pattern matches: #error: -- unsupported Microsoft Visual Studio version! Only the versions between 2017 and 2022 (inclusive) are supported!
-            $oldPattern = '#error\s*:\s*--\s*unsupported\s+Microsoft\s+Visual\s+Studio\s+version[^\n]*'
-            if ($content -match $oldPattern) {
-              $newContent = $content -replace $oldPattern, '#warning: VS version check disabled for CI compatibility (VS2022 14.44+)'
+            Write-Host "File size: $($content.Length) characters"
+            
+            # Try multiple patterns to find the error line
+            $patterns = @(
+              '#error\s*:\s*--\s*unsupported\s+Microsoft\s+Visual\s+Studio\s+version[^!]*!',
+              '#error.*unsupported.*Microsoft.*Visual.*Studio.*version',
+              '#error.*2022.*inclusive.*supported'
+            )
+            
+            $patched = $false
+            foreach ($pattern in $patterns) {
+              if ($content -match $pattern) {
+                Write-Host "Found pattern: $pattern"
+                # Replace the entire error line with a warning
+                $newContent = $content -replace $pattern, '#warning: VS version check disabled for CI compatibility (VS2022 14.44+)'
+                $patched = $true
+                break
+              }
+            }
+            
+            if (-not $patched) {
+              # Try line-by-line replacement as fallback
+              Write-Host "Pattern matching failed, trying line-by-line replacement..."
+              $lines = Get-Content $hostConfigPath
+              $newLines = @()
+              foreach ($line in $lines) {
+                if ($line -match '#error.*unsupported.*Visual.*Studio') {
+                  Write-Host "Found error line: $line"
+                  $newLines += '#warning: VS version check disabled for CI compatibility (VS2022 14.44+)'
+                  $patched = $true
+                } else {
+                  $newLines += $line
+                }
+              }
+              if ($patched) {
+                $newContent = $newLines -join "`n"
+              }
+            }
+            
+            if ($patched) {
               # Remove read-only attribute if present
               $file = Get-Item $hostConfigPath -ErrorAction Stop
               if ($file.IsReadOnly) {
                 $file.IsReadOnly = $false
+                Write-Host "Removed read-only attribute"
               }
               # Write patched content
               Set-Content $hostConfigPath -Value $newContent -NoNewline -ErrorAction Stop
               Write-Host "Successfully patched CUDA host_config.h for VS2022 compatibility"
+              
+              # Verify the patch
+              $verifyContent = Get-Content $hostConfigPath -Raw
+              if ($verifyContent -match '#warning.*VS version check disabled') {
+                Write-Host "Patch verified successfully"
+              } else {
+                Write-Host "Warning: Patch verification failed"
+              }
             } else {
-              Write-Host "Warning: Could not find version check pattern in host_config.h (may already be patched)"
+              Write-Host "Warning: Could not find version check pattern in host_config.h"
+              Write-Host "File may already be patched or format changed"
+              # Show first few lines containing 'error' or '2022'
+              $lines = Get-Content $hostConfigPath | Select-String -Pattern "(error|2022|Visual Studio)" | Select-Object -First 5
+              Write-Host "Relevant lines found:"
+              $lines | ForEach-Object { Write-Host "  $_" }
             }
           } catch {
             Write-Host "Error patching host_config.h: $_"
+            Write-Host "Stack trace: $($_.ScriptStackTrace)"
             Write-Host "Will rely on CMAKE_CUDA_FLAGS instead"
           }
         } else {
           Write-Host "Warning: host_config.h not found at $hostConfigPath"
+          Write-Host "Searching for CUDA installation..."
+          $cudaDirs = Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\" -ErrorAction SilentlyContinue
+          if ($cudaDirs) {
+            Write-Host "Found CUDA directories:"
+            $cudaDirs | ForEach-Object { Write-Host "  $($_.FullName)" }
+          }
         }
     
     - name: Configure CMake
@@ -103,15 +160,19 @@ jobs:
       env:
         # Set CUDA flags as environment variable (backup method)
         CMAKE_CUDA_FLAGS: "-allow-unsupported-compiler"
+        CMAKE_CUDA_FLAGS_INIT: "-allow-unsupported-compiler"
       run: |
         $buildDir = "build-${{ matrix.config.name }}"
         New-Item -ItemType Directory -Force -Path $buildDir
         # Set CUDA flags via multiple methods for maximum compatibility
+        # Use toolchain file to set flags before compiler detection
         cmake -S . -B $buildDir `
+          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/CudaVS2022Fix.cmake" `
           -G "Visual Studio 17 2022" `
           -A x64 `
           -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} `
           -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
+          -DCMAKE_CUDA_FLAGS_INIT="-allow-unsupported-compiler" `
           -DCUDA_ARCH=sm_75 `
           -DBUILD_EXAMPLES=ON `
           -DBUILD_TESTS=ON `
