@@ -70,89 +70,122 @@ jobs:
       run: |
         # Patch CUDA host_config.h to allow VS2022 14.44+ (needed because compiler detection doesn't use CMAKE_CUDA_FLAGS)
         $hostConfigPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\include\crt\host_config.h"
+        
+        Write-Host "Attempting to patch CUDA host_config.h for VS2022 compatibility"
+        Write-Host "Target file: $hostConfigPath"
+        
+        if (-not (Test-Path $hostConfigPath)) {
+          Write-Host "ERROR: host_config.h not found at $hostConfigPath"
+          Write-Host "Searching for CUDA installation..."
+          $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\"
+          if (Test-Path $cudaBase) {
+            $cudaDirs = Get-ChildItem $cudaBase -Directory -ErrorAction SilentlyContinue
+            Write-Host "Found CUDA directories:"
+            $cudaDirs | ForEach-Object { 
+              Write-Host "  $($_.FullName)"
+              $testPath = Join-Path $_.FullName "include\crt\host_config.h"
+              if (Test-Path $testPath) {
+                Write-Host "    -> Found host_config.h at: $testPath"
+                $hostConfigPath = $testPath
+              }
+            }
+          }
+        }
+        
         if (Test-Path $hostConfigPath) {
           try {
             Write-Host "Reading host_config.h from: $hostConfigPath"
-            # Read file content
-            $content = Get-Content $hostConfigPath -Raw -ErrorAction Stop
-            Write-Host "File size: $($content.Length) characters"
             
-            # Try multiple patterns to find the error line
-            $patterns = @(
-              '#error\s*:\s*--\s*unsupported\s+Microsoft\s+Visual\s+Studio\s+version[^!]*!',
-              '#error.*unsupported.*Microsoft.*Visual.*Studio.*version',
-              '#error.*2022.*inclusive.*supported'
-            )
+            # Read file as lines (more reliable than -Raw for line-by-line processing)
+            $lines = Get-Content $hostConfigPath -ErrorAction Stop
+            Write-Host "File has $($lines.Count) lines"
             
+            # Find the error line (typically around line 153)
             $patched = $false
-            foreach ($pattern in $patterns) {
-              if ($content -match $pattern) {
-                Write-Host "Found pattern: $pattern"
-                # Replace the entire error line with a warning
-                $newContent = $content -replace $pattern, '#warning: VS version check disabled for CI compatibility (VS2022 14.44+)'
-                $patched = $true
-                break
-              }
-            }
+            $newLines = @()
+            $lineNum = 0
             
-            if (-not $patched) {
-              # Try line-by-line replacement as fallback
-              Write-Host "Pattern matching failed, trying line-by-line replacement..."
-              $lines = Get-Content $hostConfigPath
-              $newLines = @()
-              foreach ($line in $lines) {
-                if ($line -match '#error.*unsupported.*Visual.*Studio') {
-                  Write-Host "Found error line: $line"
-                  $newLines += '#warning: VS version check disabled for CI compatibility (VS2022 14.44+)'
-                  $patched = $true
-                } else {
-                  $newLines += $line
-                }
-              }
-              if ($patched) {
-                $newContent = $newLines -join "`n"
+            foreach ($line in $lines) {
+              $lineNum++
+              # Check for the specific error message
+              if ($line -match '#error.*unsupported.*Microsoft.*Visual.*Studio.*version') {
+                Write-Host "Found error on line $lineNum : $line"
+                # Replace with warning
+                $newLines += '#warning: VS version check disabled for CI compatibility (VS2022 14.44+)'
+                $patched = $true
+              } elseif ($line -match '#error.*2022.*inclusive.*supported') {
+                Write-Host "Found error on line $lineNum : $line"
+                $newLines += '#warning: VS version check disabled for CI compatibility (VS2022 14.44+)'
+                $patched = $true
+              } else {
+                $newLines += $line
               }
             }
             
             if ($patched) {
-              # Remove read-only attribute if present
+              Write-Host "Patch successful! Removing read-only attribute..."
+              # Remove read-only attribute
               $file = Get-Item $hostConfigPath -ErrorAction Stop
               if ($file.IsReadOnly) {
                 $file.IsReadOnly = $false
                 Write-Host "Removed read-only attribute"
               }
+              
+              # Take ownership and set permissions (may require admin, but try anyway)
+              try {
+                $acl = Get-Acl $hostConfigPath
+                $permission = "BUILTIN\Administrators","FullControl","Allow"
+                $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule $permission
+                $acl.SetAccessRule($accessRule)
+                Set-Acl $hostConfigPath $acl -ErrorAction SilentlyContinue
+              } catch {
+                Write-Host "Note: Could not modify ACL (may require admin): $_"
+              }
+              
               # Write patched content
-              Set-Content $hostConfigPath -Value $newContent -NoNewline -ErrorAction Stop
-              Write-Host "Successfully patched CUDA host_config.h for VS2022 compatibility"
+              Write-Host "Writing patched content..."
+              $newContent = $newLines -join "`r`n"
+              [System.IO.File]::WriteAllText($hostConfigPath, $newContent, [System.Text.Encoding]::UTF8)
+              Write-Host "Successfully wrote patched file"
               
               # Verify the patch
-              $verifyContent = Get-Content $hostConfigPath -Raw
-              if ($verifyContent -match '#warning.*VS version check disabled') {
-                Write-Host "Patch verified successfully"
-              } else {
-                Write-Host "Warning: Patch verification failed"
+              Write-Host "Verifying patch..."
+              $verifyLines = Get-Content $hostConfigPath
+              $foundWarning = $false
+              foreach ($vline in $verifyLines) {
+                if ($vline -match '#warning.*VS version check disabled') {
+                  Write-Host "SUCCESS: Patch verified - found warning line: $vline"
+                  $foundWarning = $true
+                  break
+                }
+              }
+              
+              if (-not $foundWarning) {
+                Write-Host "WARNING: Patch verification failed - warning not found in file"
+                Write-Host "Showing lines around expected location:"
+                $verifyLines[150..160] | ForEach-Object { Write-Host "  $_" }
               }
             } else {
-              Write-Host "Warning: Could not find version check pattern in host_config.h"
-              Write-Host "File may already be patched or format changed"
-              # Show first few lines containing 'error' or '2022'
-              $lines = Get-Content $hostConfigPath | Select-String -Pattern "(error|2022|Visual Studio)" | Select-Object -First 5
-              Write-Host "Relevant lines found:"
-              $lines | ForEach-Object { Write-Host "  $_" }
+              Write-Host "ERROR: Could not find error line to patch"
+              Write-Host "Searching for relevant lines..."
+              $errorLines = $lines | Select-String -Pattern "(error|2022|Visual Studio|unsupported)" | Select-Object -First 10
+              if ($errorLines) {
+                Write-Host "Found relevant lines:"
+                $errorLines | ForEach-Object { Write-Host "  Line $($_.LineNumber): $($_.Line)" }
+              } else {
+                Write-Host "No relevant lines found - file may already be patched"
+              }
+              exit 1
             }
           } catch {
-            Write-Host "Error patching host_config.h: $_"
+            Write-Host "ERROR patching host_config.h: $_"
+            Write-Host "Exception type: $($_.Exception.GetType().FullName)"
             Write-Host "Stack trace: $($_.ScriptStackTrace)"
-            Write-Host "Will rely on CMAKE_CUDA_FLAGS instead"
+            exit 1
           }
         } else {
-          Write-Host "Warning: host_config.h not found at $hostConfigPath"
-          Write-Host "Searching for CUDA installation..."
-          $cudaDirs = Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\" -ErrorAction SilentlyContinue
-          if ($cudaDirs) {
-            Write-Host "Found CUDA directories:"
-            $cudaDirs | ForEach-Object { Write-Host "  $($_.FullName)" }
-          }
+          Write-Host "ERROR: Could not locate host_config.h file"
+          exit 1
         }
     
     - name: Configure CMake
