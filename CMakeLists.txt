@@ -51,10 +51,6 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 enable_language(CUDA)
 find_package(CUDAToolkit REQUIRED)
 
-# Define USE_CUDA macro for compile-time conditional compilation
-# This allows code to check if CUDA support is available at compile time
-target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUDA)
-
 # Set CUDA architecture (user can override with -DCUDA_ARCH)
 if(NOT DEFINED CUDA_ARCH)
     set(CUDA_ARCH "sm_75" CACHE STRING "CUDA architecture")
@@ -126,6 +122,10 @@ add_library(${PROJECT_NAME} SHARED ${SOURCES} ${CUDA_SOURCES})
 
 # Define export macro when building the DLL
 target_compile_definitions(${PROJECT_NAME} PRIVATE SLE_EXPORTS)
+
+# Define USE_CUDA macro for compile-time conditional compilation
+# This allows code to check if CUDA support is available at compile time
+target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUDA)
 
 # Set include directories for the library
 target_include_directories(${PROJECT_NAME} PUBLIC
