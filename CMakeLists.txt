@@ -83,9 +83,6 @@ set(SOURCES
     src/baddata/DataConsistencyChecker.cpp
     src/measurements/VirtualMeasurementGenerator.cpp
     src/measurements/PseudoMeasurementGenerator.cpp
-    src/utils/Logger.cpp
-    src/utils/Config.cpp
-    src/utils/Validation.cpp
     src/utils/LoadDistributor.cpp
     src/utils/EstimationComparator.cpp
     src/cuda/CudaMemoryManager.cpp
