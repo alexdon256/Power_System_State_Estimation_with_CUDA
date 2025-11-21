@@ -101,6 +101,7 @@ void JacobianMatrix::build(const StateVector& state,
 void JacobianMatrix::buildGPU(const StateVector& state,
                              const NetworkModel& network,
                              const TelemetryData& telemetry) {
+    (void)state;  // May be used in future implementation
     buildStructure(network, telemetry);
     
     // This would call the CUDA kernel to fill values

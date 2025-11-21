@@ -4,9 +4,9 @@
  * Power System State Estimation with CUDA
  */
 
-#include <sle/math/SparseMatrix.h>
 #include <cuda_runtime.h>
 #include <cusparse.h>
+#include <sle/math/SparseMatrix.h>
 #include <stdexcept>
 
 namespace sle {
@@ -85,9 +85,24 @@ void SparseMatrix::buildFromCSR(const std::vector<Real>& values,
     allocateDeviceMemory();
     
     // Copy data to device
-    cudaMemcpy(d_values_, values.data(), nnz_ * sizeof(Real), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_rowPtr_, rowPtr.data(), (nRows_ + 1) * sizeof(Index), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_colInd_, colInd.data(), nnz_ * sizeof(Index), cudaMemcpyHostToDevice);
+    cudaError_t err;
+    err = cudaMemcpy(d_values_, values.data(), nnz_ * sizeof(Real), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+        freeDeviceMemory();
+        throw std::runtime_error("Failed to copy sparse matrix values to device");
+    }
+    
+    err = cudaMemcpy(d_rowPtr_, rowPtr.data(), (nRows_ + 1) * sizeof(Index), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+        freeDeviceMemory();
+        throw std::runtime_error("Failed to copy sparse matrix row pointers to device");
+    }
+    
+    err = cudaMemcpy(d_colInd_, colInd.data(), nnz_ * sizeof(Index), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+        freeDeviceMemory();
+        throw std::runtime_error("Failed to copy sparse matrix column indices to device");
+    }
 }
 
 void SparseMatrix::multiplyVector(const Real* x, Real* y, cusparseHandle_t handle) const {

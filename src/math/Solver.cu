@@ -10,7 +10,6 @@
 #include <sle/model/NetworkModel.h>
 #include <sle/model/StateVector.h>
 #include <sle/model/TelemetryData.h>
-#include <sle/cuda/CudaSparseOps.cu>
 #include <sle/cuda/CudaWeightedOps.h>
 #include <cusparse.h>
 #include <cusolverSp.h>
