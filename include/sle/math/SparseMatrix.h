@@ -9,8 +9,13 @@
 
 #include <sle/Types.h>
 #include <vector>
+
+#ifdef USE_CUDA
 #include <cuda_runtime.h>
 #include <cusparse.h>
+#else
+using cusparseHandle_t = void*;
+#endif
 
 namespace sle {
 namespace math {
