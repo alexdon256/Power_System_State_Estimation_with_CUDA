@@ -13,11 +13,9 @@
 #include <sle/Types.h>
 #include <string>
 #include <memory>
-#include <mutex>
 #include <atomic>
 #include <thread>
 #include <queue>
-#include <condition_variable>
 
 namespace sle {
 namespace interface {
@@ -65,10 +63,8 @@ public:
     
 private:
     model::TelemetryData* telemetry_;
-    std::mutex telemetryMutex_;
     
     std::queue<TelemetryUpdate> updateQueue_;
-    mutable std::mutex queueMutex_;  // Mutable to allow locking in const methods
     std::condition_variable queueCondition_;
     
     std::atomic<bool> running_;

@@ -14,7 +14,6 @@
 #include <sle/math/Solver.h>
 #include <sle/interface/TelemetryProcessor.h>
 #include <memory>
-#include <mutex>
 #include <atomic>
 
 namespace sle {
@@ -96,7 +95,6 @@ private:
     std::unique_ptr<math::Solver> solver_;
     TelemetryProcessor telemetryProcessor_;
     
-    mutable std::mutex estimationMutex_;  // Mutable to allow locking in const methods
     std::atomic<bool> modelUpdated_;
     std::atomic<bool> telemetryUpdated_;
     

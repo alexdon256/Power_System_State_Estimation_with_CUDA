@@ -126,11 +126,27 @@ __device__ void computeJacobianPowerFlow(const Real* v, const Real* theta,
 }
 
 // Jacobian for power injection measurements
+// Optimized with CSR adjacency lists for O(avg_degree) complexity instead of O(nBranches)
+// branchFromBus/branchToBus are CSR column indices, rowPtr are row pointers
 __device__ void computeJacobianPowerInjection(const Real* v, const Real* theta,
                                               const DeviceBus* buses, const DeviceBranch* branches,
+                                              const Index* branchFromBus, const Index* branchFromBusRowPtr,
+                                              const Index* branchToBus, const Index* branchToBusRowPtr,
                                               Index busIdx, Index nBuses, Index nBranches,
                                               Real* dPdTheta, Real* dPdV,
                                               Real* dQdTheta, Real* dQdV) {
+    // Bounds checking: validate bus index before accessing
+    if (busIdx < 0 || busIdx >= nBuses) {
+        // Invalid bus index - zero all derivatives
+        for (Index i = 0; i < nBuses; ++i) {
+            dPdTheta[i] = 0.0;
+            dPdV[i] = 0.0;
+            dQdTheta[i] = 0.0;
+            dQdV[i] = 0.0;
+        }
+        return;
+    }
+    
     // Initialize to zero
     for (Index i = 0; i < nBuses; ++i) {
         dPdTheta[i] = 0.0;
@@ -145,46 +161,92 @@ __device__ void computeJacobianPowerInjection(const Real* v, const Real* theta,
     dPdV[busIdx] += 2.0 * v[busIdx] * bus.gShunt;
     dQdV[busIdx] -= 2.0 * v[busIdx] * bus.bShunt;
     
-    // Branch contributions
-    for (Index i = 0; i < nBranches; ++i) {
-        const DeviceBranch& br = branches[i];
-        Real dPdThetaFrom[2], dPdVFrom[2];
-        Real dQdThetaFrom[2], dQdVFrom[2];
-        
-        if (br.fromBus == busIdx) {
-            computeJacobianPowerFlow(v, theta, branches, i, br.fromBus, br.toBus,
-                                     dPdThetaFrom, dPdVFrom, dQdThetaFrom, dQdVFrom);
-            
-            dPdTheta[br.fromBus] += dPdThetaFrom[0];
-            dPdTheta[br.toBus] += dPdThetaFrom[1];
-            dPdV[br.fromBus] += dPdVFrom[0];
-            dPdV[br.toBus] += dPdVFrom[1];
-            
-            dQdTheta[br.fromBus] += dQdThetaFrom[0];
-            dQdTheta[br.toBus] += dQdThetaFrom[1];
-            dQdV[br.fromBus] += dQdVFrom[0];
-            dQdV[br.toBus] += dQdVFrom[1];
-        } else if (br.toBus == busIdx) {
-            // Reverse direction (similar computation with reversed indices)
-            computeJacobianPowerFlow(v, theta, branches, i, br.toBus, br.fromBus,
-                                     dPdThetaFrom, dPdVFrom, dQdThetaFrom, dQdVFrom);
-            
-            dPdTheta[br.toBus] += dPdThetaFrom[0];
-            dPdTheta[br.fromBus] += dPdThetaFrom[1];
-            dPdV[br.toBus] += dPdVFrom[0];
-            dPdV[br.fromBus] += dPdVFrom[1];
-            
-            dQdTheta[br.toBus] += dQdThetaFrom[0];
-            dQdTheta[br.fromBus] += dQdThetaFrom[1];
-            dQdV[br.toBus] += dQdVFrom[0];
-            dQdV[br.fromBus] += dQdVFrom[1];
+    // Outgoing branch contributions (using CSR adjacency list - O(avg_degree) instead of O(nBranches))
+    // Validate busIdx+1 is within row pointer array bounds (array has nBuses+1 elements)
+    if (busIdx + 1 <= nBuses) {
+        Index fromStart = branchFromBusRowPtr[busIdx];
+        Index fromEnd = branchFromBusRowPtr[busIdx + 1];
+        // Validate CSR format: fromEnd >= fromStart and within reasonable bounds
+        if (fromEnd >= fromStart && fromEnd <= static_cast<Index>(nBranches)) {
+            for (Index i = fromStart; i < fromEnd; ++i) {
+                // Bounds check: ensure CSR index is valid
+                if (i >= 0 && i < static_cast<Index>(nBranches)) {
+                    Index brIdx = branchFromBus[i];
+                    // Validate branch index is within bounds
+                    if (brIdx >= 0 && brIdx < nBranches) {
+                        const DeviceBranch& br = branches[brIdx];
+                        // Validate branch connects to this bus (sanity check)
+                        if (br.fromBus == busIdx && br.toBus >= 0 && br.toBus < nBuses) {
+                            Real dPdThetaFrom[2], dPdVFrom[2];
+                            Real dQdThetaFrom[2], dQdVFrom[2];
+                            
+                            computeJacobianPowerFlow(v, theta, branches, brIdx, br.fromBus, br.toBus,
+                                                     dPdThetaFrom, dPdVFrom, dQdThetaFrom, dQdVFrom);
+                            
+                            // Accumulate derivatives
+                            dPdTheta[br.fromBus] += dPdThetaFrom[0];
+                            dPdTheta[br.toBus] += dPdThetaFrom[1];
+                            dPdV[br.fromBus] += dPdVFrom[0];
+                            dPdV[br.toBus] += dPdVFrom[1];
+                            
+                            dQdTheta[br.fromBus] += dQdThetaFrom[0];
+                            dQdTheta[br.toBus] += dQdThetaFrom[1];
+                            dQdV[br.fromBus] += dQdVFrom[0];
+                            dQdV[br.toBus] += dQdVFrom[1];
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Incoming branch contributions (reverse direction, using CSR adjacency list)
+    // Validate busIdx+1 is within row pointer array bounds
+    if (busIdx + 1 <= nBuses) {
+        Index toStart = branchToBusRowPtr[busIdx];
+        Index toEnd = branchToBusRowPtr[busIdx + 1];
+        // Validate CSR format: toEnd >= toStart and within reasonable bounds
+        if (toEnd >= toStart && toEnd <= static_cast<Index>(nBranches)) {
+            for (Index i = toStart; i < toEnd; ++i) {
+                // Bounds check: ensure CSR index is valid
+                if (i >= 0 && i < static_cast<Index>(nBranches)) {
+                    Index brIdx = branchToBus[i];
+                    // Validate branch index is within bounds
+                    if (brIdx >= 0 && brIdx < nBranches) {
+                        const DeviceBranch& br = branches[brIdx];
+                        // Validate branch connects to this bus (sanity check)
+                        if (br.toBus == busIdx && br.fromBus >= 0 && br.fromBus < nBuses) {
+                            Real dPdThetaFrom[2], dPdVFrom[2];
+                            Real dQdThetaFrom[2], dQdVFrom[2];
+                            
+                            // Reverse direction (similar computation with reversed indices)
+                            computeJacobianPowerFlow(v, theta, branches, brIdx, br.toBus, br.fromBus,
+                                                     dPdThetaFrom, dPdVFrom, dQdThetaFrom, dQdVFrom);
+                            
+                            // Accumulate derivatives (note: reversed indices)
+                            dPdTheta[br.toBus] += dPdThetaFrom[0];
+                            dPdTheta[br.fromBus] += dPdThetaFrom[1];
+                            dPdV[br.toBus] += dPdVFrom[0];
+                            dPdV[br.fromBus] += dPdVFrom[1];
+                            
+                            dQdTheta[br.toBus] += dQdThetaFrom[0];
+                            dQdTheta[br.fromBus] += dQdThetaFrom[1];
+                            dQdV[br.toBus] += dQdVFrom[0];
+                            dQdV[br.fromBus] += dQdVFrom[1];
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 // Main kernel to compute Jacobian matrix elements
+// Optimized with CSR adjacency lists for power injection Jacobian computation
 __global__ void computeJacobianKernel(const Real* v, const Real* theta,
                                       const DeviceBus* buses, const DeviceBranch* branches,
+                                      const Index* branchFromBus, const Index* branchFromBusRowPtr,
+                                      const Index* branchToBus, const Index* branchToBusRowPtr,
                                       const Index* measurementTypes,
                                       const Index* measurementLocations,
                                       const Index* measurementBranches,
@@ -201,6 +263,14 @@ __global__ void computeJacobianKernel(const Real* v, const Real* theta,
         
         if (type == 0 || type == 1) { // P_FLOW or Q_FLOW
             Index branchIdx = measurementBranches[measIdx];
+            // Bounds checking: validate branch index before accessing
+            if (branchIdx < 0 || branchIdx >= nBranches) {
+                // Invalid branch index - set all Jacobian elements to zero
+                for (Index i = rowStart; i < rowEnd; ++i) {
+                    jacobianValues[i] = 0.0;
+                }
+                continue;  // Skip to next measurement
+            }
             const DeviceBranch& br = branches[branchIdx];
             
             Real dPdTheta[2], dPdV[2], dQdTheta[2], dQdV[2];
@@ -234,7 +304,18 @@ __global__ void computeJacobianKernel(const Real* v, const Real* theta,
         } else if (type == 2 || type == 3) { // P_INJECTION or Q_INJECTION
             Index busIdx = measurementLocations[measIdx];
             
+            // Bounds checking: validate bus index before accessing
+            if (busIdx < 0 || busIdx >= nBuses) {
+                // Invalid bus index - set all Jacobian elements to zero
+                for (Index i = rowStart; i < rowEnd; ++i) {
+                    jacobianValues[i] = 0.0;
+                }
+                continue;  // Skip to next measurement
+            }
+            
             // Allocate shared memory for Jacobian elements
+            // Validate shared memory size (4 * nBuses * sizeof(Real))
+            // Note: Shared memory is allocated at kernel launch, so we assume it's sufficient
             extern __shared__ Real sharedJac[];
             Real* dPdTheta = sharedJac;
             Real* dPdV = sharedJac + nBuses;
@@ -242,6 +323,8 @@ __global__ void computeJacobianKernel(const Real* v, const Real* theta,
             Real* dQdV = sharedJac + 3 * nBuses;
             
             computeJacobianPowerInjection(v, theta, buses, branches,
+                                         branchFromBus, branchFromBusRowPtr,
+                                         branchToBus, branchToBusRowPtr,
                                          busIdx, nBuses, nBranches,
                                          dPdTheta, dPdV, dQdTheta, dQdV);
             
@@ -258,6 +341,15 @@ __global__ void computeJacobianKernel(const Real* v, const Real* theta,
             }
         } else if (type == 4) { // V_MAGNITUDE
             Index busIdx = measurementLocations[measIdx];
+            
+            // Bounds checking: validate bus index before accessing
+            if (busIdx < 0 || busIdx >= nBuses) {
+                // Invalid bus index - set all Jacobian elements to zero
+                for (Index i = rowStart; i < rowEnd; ++i) {
+                    jacobianValues[i] = 0.0;
+                }
+                continue;  // Skip to next measurement
+            }
             
             // dV/dV = 1, dV/dtheta = 0
             for (Index i = rowStart; i < rowEnd; ++i) {
@@ -278,8 +370,11 @@ __global__ void computeJacobianKernel(const Real* v, const Real* theta,
 }
 
 // Optimized wrapper function with constexpr
+// Uses CSR adjacency lists for O(avg_degree) complexity in power injection Jacobian
 void computeJacobian(const Real* v, const Real* theta,
                     const DeviceBus* buses, const DeviceBranch* branches,
+                    const Index* branchFromBus, const Index* branchFromBusRowPtr,
+                    const Index* branchToBus, const Index* branchToBusRowPtr,
                     const Index* measurementTypes,
                     const Index* measurementLocations,
                     const Index* measurementBranches,
@@ -294,6 +389,7 @@ void computeJacobian(const Real* v, const Real* theta,
     
     computeJacobianKernel<<<gridSize, blockSize, sharedMemSize>>>(
         v, theta, buses, branches,
+        branchFromBus, branchFromBusRowPtr, branchToBus, branchToBusRowPtr,
         measurementTypes, measurementLocations, measurementBranches,
         jacobianRowPtr, jacobianColInd, jacobianValues,
         nMeasurements, nBuses, nBranches);

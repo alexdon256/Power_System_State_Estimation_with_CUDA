@@ -17,6 +17,9 @@ class Bus {
 public:
     Bus(BusId id, const std::string& name = "");
     
+    // Copy assignment operator
+    Bus& operator=(const Bus& other);
+    
     BusId getId() const { return id_; }
     const std::string& getName() const { return name_; }
     

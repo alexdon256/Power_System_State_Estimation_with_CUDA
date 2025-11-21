@@ -10,7 +10,6 @@
 #include <sle/Export.h>
 #include <sle/model/TelemetryData.h>
 #include <sle/model/NetworkModel.h>
-#include <sle/model/DeviceModel.h>
 #include <string>
 #include <memory>
 #include <vector>

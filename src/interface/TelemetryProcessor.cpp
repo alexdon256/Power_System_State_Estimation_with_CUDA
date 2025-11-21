@@ -22,56 +22,49 @@ TelemetryProcessor::~TelemetryProcessor() {
 }
 
 void TelemetryProcessor::setTelemetryData(model::TelemetryData* telemetry) {
-    std::lock_guard<std::mutex> lock(telemetryMutex_);
     telemetry_ = telemetry;
 }
 
 void TelemetryProcessor::updateMeasurement(const TelemetryUpdate& update) {
-    std::lock_guard<std::mutex> lock(queueMutex_);
     updateQueue_.push(update);
-    queueCondition_.notify_one();
 }
 
 void TelemetryProcessor::addMeasurement(const TelemetryUpdate& update) {
     updateMeasurement(update);
 }
 
-void TelemetryProcessor::removeMeasurement(const std::string& /* deviceId */) {
-    std::lock_guard<std::mutex> lock(telemetryMutex_);
+void TelemetryProcessor::removeMeasurement(const std::string& deviceId) {
     if (!telemetry_) return;
     
-    // Remove measurement by device ID
-    // This would need TelemetryData to support removal
+    telemetry_->removeMeasurement(deviceId);
 }
 
 void TelemetryProcessor::updateMeasurements(const std::vector<TelemetryUpdate>& updates) {
-    std::lock_guard<std::mutex> lock(queueMutex_);
     for (const auto& update : updates) {
         updateQueue_.push(update);
     }
-    queueCondition_.notify_one();
 }
 
 void TelemetryProcessor::processUpdateQueue() {
-    std::unique_lock<std::mutex> lock(queueMutex_);
-    
     while (!updateQueue_.empty()) {
         TelemetryUpdate update = updateQueue_.front();
         updateQueue_.pop();
-        lock.unlock();
         
         applyUpdate(update);
-        
-        lock.lock();
     }
 }
 
 void TelemetryProcessor::applyUpdate(const TelemetryUpdate& update) {
-    std::lock_guard<std::mutex> lock(telemetryMutex_);
     if (!telemetry_) return;
     
-    // Find existing measurement by device ID and update, or create new
-    // For now, always create new (would need device ID lookup in TelemetryData)
+    // Try to update existing measurement by device ID
+    if (!update.deviceId.empty() && 
+        telemetry_->updateMeasurement(update.deviceId, update.value, update.stdDev, update.timestamp)) {
+        latestTimestamp_.store(update.timestamp);
+        return;  // Successfully updated existing measurement
+    }
+    
+    // Create new measurement if update failed (device ID not found or empty)
     auto measurement = std::make_unique<model::MeasurementModel>(
         update.type, update.value, update.stdDev, update.deviceId);
     
@@ -103,7 +96,6 @@ void TelemetryProcessor::stopRealTimeProcessing() {
     }
     
     running_.store(false);
-    queueCondition_.notify_all();
     
     if (processingThread_.joinable()) {
         processingThread_.join();
@@ -111,30 +103,20 @@ void TelemetryProcessor::stopRealTimeProcessing() {
 }
 
 bool TelemetryProcessor::hasPendingUpdates() const {
-    std::lock_guard<std::mutex> lock(queueMutex_);
     return !updateQueue_.empty();
 }
 
 void TelemetryProcessor::processingLoop() {
     while (running_.load()) {
-        std::unique_lock<std::mutex> lock(queueMutex_);
-        
-        queueCondition_.wait(lock, [this] {
-            return !updateQueue_.empty() || !running_.load();
-        });
-        
-        if (!running_.load()) {
-            break;
-        }
-        
-        while (!updateQueue_.empty()) {
+        // Poll for updates (non-thread-safe - single-threaded use only)
+        if (!updateQueue_.empty()) {
             TelemetryUpdate update = updateQueue_.front();
             updateQueue_.pop();
-            lock.unlock();
             
             applyUpdate(update);
-            
-            lock.lock();
+        } else {
+            // Sleep briefly to avoid busy-waiting
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 }

@@ -38,6 +38,8 @@ public:
     Bus* addBus(BusId id, const std::string& name = "");
     Bus* getBus(BusId id);
     const Bus* getBus(BusId id) const;
+    Bus* getBusByName(const std::string& name);  // Search by name (case-sensitive)
+    const Bus* getBusByName(const std::string& name) const;  // Search by name (case-sensitive)
     std::vector<Bus*> getBuses();
     std::vector<const Bus*> getBuses() const;
     size_t getBusCount() const { return buses_.size(); }
@@ -146,6 +148,7 @@ private:
     std::vector<std::unique_ptr<Branch>> branches_;
     std::unordered_map<BusId, Index> busIndexMap_;
     std::unordered_map<BranchId, Index> branchIndexMap_;
+    std::unordered_map<std::string, Index> busNameMap_;  // Name -> index mapping for O(1) lookup
     
     Real baseMVA_;
     BusId referenceBus_;

@@ -12,6 +12,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 namespace sle {
 namespace model {
@@ -36,6 +37,16 @@ public:
     // Filter measurements by branch
     std::vector<const MeasurementModel*> getMeasurementsByBranch(BusId fromBus, BusId toBus) const;
     
+    // Find measurement by device ID (O(1) average case)
+    MeasurementModel* findMeasurementByDeviceId(const std::string& deviceId);
+    const MeasurementModel* findMeasurementByDeviceId(const std::string& deviceId) const;
+    
+    // Remove measurement by device ID
+    bool removeMeasurement(const std::string& deviceId);
+    
+    // Update measurement by device ID (returns true if found and updated)
+    bool updateMeasurement(const std::string& deviceId, Real value, Real stdDev, int64_t timestamp = -1);
+    
     // Get measurement vector z
     void getMeasurementVector(std::vector<Real>& z) const;
     
@@ -45,7 +56,9 @@ public:
     void clear();
     
 private:
+    
     std::vector<std::unique_ptr<MeasurementModel>> measurements_;
+    std::unordered_map<std::string, size_t> deviceIdIndex_;  // Device ID -> index mapping for O(1) lookup
 };
 
 } // namespace model

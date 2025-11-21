@@ -27,7 +27,6 @@ StateEstimator::~StateEstimator() {
 }
 
 void StateEstimator::setNetwork(std::shared_ptr<model::NetworkModel> network) {
-    std::lock_guard<std::mutex> lock(estimationMutex_);
     network_ = network;
     modelUpdated_.store(true);
     
@@ -42,7 +41,6 @@ std::shared_ptr<model::NetworkModel> StateEstimator::getNetwork() const {
 }
 
 void StateEstimator::setTelemetryData(std::shared_ptr<model::TelemetryData> telemetry) {
-    std::lock_guard<std::mutex> lock(estimationMutex_);
     telemetry_ = telemetry;
     telemetryProcessor_.setTelemetryData(telemetry_.get());
     telemetryUpdated_.store(true);
@@ -61,8 +59,6 @@ void StateEstimator::updateTelemetryData(std::shared_ptr<model::TelemetryData> t
 }
 
 StateEstimationResult StateEstimator::estimate() {
-    std::lock_guard<std::mutex> lock(estimationMutex_);
-    
     if (!network_ || !telemetry_) {
         StateEstimationResult result;
         result.converged = false;
@@ -101,8 +97,6 @@ StateEstimationResult StateEstimator::estimate() {
 StateEstimationResult StateEstimator::estimateIncremental() {
     // Use current state as initial guess for faster convergence
     // This is optimized for real-time updates where state changes are small
-    std::lock_guard<std::mutex> lock(estimationMutex_);
-    
     if (!network_ || !telemetry_) {
         StateEstimationResult result;
         result.converged = false;
@@ -137,7 +131,6 @@ StateEstimationResult StateEstimator::estimateIncremental() {
 }
 
 std::shared_ptr<model::StateVector> StateEstimator::getCurrentState() const {
-    std::lock_guard<std::mutex> lock(estimationMutex_);
     if (currentState_) {
         return std::make_shared<model::StateVector>(*currentState_);
     }
@@ -205,18 +198,10 @@ Real StateEstimator::getVoltageMagnitude(BusId busId) const {
         return 0.0;
     }
     
-    // Convert bus ID to index (assuming 1-based IDs, 0-based indices)
-    auto* bus = network_->getBus(busId);
-    if (!bus) {
-        return 0.0;
-    }
-    
-    // Find bus index
-    auto buses = network_->getBuses();
-    for (size_t i = 0; i < buses.size(); ++i) {
-        if (buses[i]->getId() == busId) {
-            return state->getVoltageMagnitude(static_cast<Index>(i));
-        }
+    // Use efficient bus index lookup instead of linear search
+    Index busIdx = network_->getBusIndex(busId);
+    if (busIdx >= 0 && static_cast<size_t>(busIdx) < state->size()) {
+        return state->getVoltageMagnitude(busIdx);
     }
     return 0.0;
 }
@@ -227,18 +212,10 @@ Real StateEstimator::getVoltageAngle(BusId busId) const {
         return 0.0;
     }
     
-    // Convert bus ID to index
-    auto* bus = network_->getBus(busId);
-    if (!bus) {
-        return 0.0;
-    }
-    
-    // Find bus index
-    auto buses = network_->getBuses();
-    for (size_t i = 0; i < buses.size(); ++i) {
-        if (buses[i]->getId() == busId) {
-            return state->getVoltageAngle(static_cast<Index>(i));
-        }
+    // Use efficient bus index lookup instead of linear search
+    Index busIdx = network_->getBusIndex(busId);
+    if (busIdx >= 0 && static_cast<size_t>(busIdx) < state->size()) {
+        return state->getVoltageAngle(busIdx);
     }
     return 0.0;
 }

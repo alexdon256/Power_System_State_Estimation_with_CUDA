@@ -19,6 +19,9 @@ class Branch {
 public:
     Branch(BranchId id, BusId fromBus, BusId toBus);
     
+    // Copy assignment operator
+    Branch& operator=(const Branch& other);
+    
     BranchId getId() const { return id_; }
     BusId getFromBus() const { return fromBus_; }
     BusId getToBus() const { return toBus_; }

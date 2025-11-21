@@ -65,6 +65,34 @@ void Bus::setPowerInjections(Real pInj, Real qInj, Real pMW, Real qMVAR) {
     qInjectionMVAR_ = qMVAR;
 }
 
+Bus& Bus::operator=(const Bus& other) {
+    if (this != &other) {
+        // id_ and name_ are not copied (they identify the bus)
+        type_ = other.type_;
+        baseKV_ = other.baseKV_;
+        voltageMag_ = other.voltageMag_;
+        voltageAngle_ = other.voltageAngle_;
+        pLoad_ = other.pLoad_;
+        qLoad_ = other.qLoad_;
+        pGen_ = other.pGen_;
+        qGen_ = other.qGen_;
+        gShunt_ = other.gShunt_;
+        bShunt_ = other.bShunt_;
+        vMin_ = other.vMin_;
+        vMax_ = other.vMax_;
+        // Computed values are not copied (they're recalculated)
+        vPU_ = other.vPU_;
+        vKV_ = other.vKV_;
+        thetaRad_ = other.thetaRad_;
+        thetaDeg_ = other.thetaDeg_;
+        pInjection_ = other.pInjection_;
+        qInjection_ = other.qInjection_;
+        pInjectionMW_ = other.pInjectionMW_;
+        qInjectionMVAR_ = other.qInjectionMVAR_;
+    }
+    return *this;
+}
+
 } // namespace model
 } // namespace sle
 

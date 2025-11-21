@@ -5,9 +5,35 @@
  */
 
 #include <cuda_runtime.h>
-#include <cusparse.h>
 #include <sle/math/SparseMatrix.h>
 #include <stdexcept>
+
+// Include cuSPARSE header after our header to ensure proper visibility
+// The header already includes cusparse.h, but we include it again here
+// to ensure cusparseDcsrmv is visible during compilation
+#include <cusparse.h>
+
+// Explicitly declare cusparseDcsrmv if not available (for older CUDA versions)
+// This function is available in cuSPARSE v2.0+ (CUDA 5.0+)
+#if defined(__CUDACC__) && !defined(CUSPARSE_DEPRECATED)
+// Function should be available from cusparse.h
+#else
+// For non-CUDA compilation or if function is not found, declare it
+extern "C" {
+cusparseStatus_t cusparseDcsrmv(
+    cusparseHandle_t handle,
+    cusparseOperation_t transA,
+    int m, int n, int nnz,
+    const double* alpha,
+    const cusparseMatDescr_t descrA,
+    const double* csrValA,
+    const int* csrRowPtrA,
+    const int* csrColIndA,
+    const double* x,
+    const double* beta,
+    double* y);
+}
+#endif
 
 namespace sle {
 namespace math {

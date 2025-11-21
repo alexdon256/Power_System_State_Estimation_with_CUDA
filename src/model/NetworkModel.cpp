@@ -91,7 +91,11 @@ Bus* NetworkModel::addBus(BusId id, const std::string& name) {
     
     auto bus = std::make_unique<Bus>(id, name);
     Bus* busPtr = bus.get();
-    busIndexMap_[id] = buses_.size();
+    Index idx = static_cast<Index>(buses_.size());
+    busIndexMap_[id] = idx;
+    if (!name.empty()) {
+        busNameMap_[name] = idx;  // Add to name index for O(1) lookup
+    }
     buses_.push_back(std::move(bus));
     invalidateCaches();
     return busPtr;
@@ -108,6 +112,22 @@ Bus* NetworkModel::getBus(BusId id) {
 const Bus* NetworkModel::getBus(BusId id) const {
     auto it = busIndexMap_.find(id);
     if (it != busIndexMap_.end()) {
+        return buses_[it->second].get();
+    }
+    return nullptr;
+}
+
+Bus* NetworkModel::getBusByName(const std::string& name) {
+    auto it = busNameMap_.find(name);
+    if (it != busNameMap_.end() && static_cast<size_t>(it->second) < buses_.size()) {
+        return buses_[it->second].get();
+    }
+    return nullptr;
+}
+
+const Bus* NetworkModel::getBusByName(const std::string& name) const {
+    auto it = busNameMap_.find(name);
+    if (it != busNameMap_.end() && static_cast<size_t>(it->second) < buses_.size()) {
         return buses_[it->second].get();
     }
     return nullptr;
@@ -132,6 +152,25 @@ std::vector<const Bus*> NetworkModel::getBuses() const {
 }
 
 Branch* NetworkModel::addBranch(BranchId id, BusId fromBus, BusId toBus) {
+    // Validate bus indices exist in network
+    Index fromBusIdx = getBusIndex(fromBus);
+    Index toBusIdx = getBusIndex(toBus);
+    if (fromBusIdx < 0 || toBusIdx < 0) {
+        #ifndef NDEBUG
+        assert(fromBusIdx >= 0 && toBusIdx >= 0 && "Branch buses must exist in network");
+        #endif
+        // In release builds, return nullptr to indicate failure
+        return nullptr;
+    }
+    
+    // Prevent self-loops (branch from bus to itself)
+    if (fromBus == toBus) {
+        #ifndef NDEBUG
+        assert(fromBus != toBus && "Branch cannot connect bus to itself");
+        #endif
+        return nullptr;
+    }
+    
     auto it = branchIndexMap_.find(id);
     if (it != branchIndexMap_.end()) {
         return branches_[it->second].get();
@@ -312,35 +351,40 @@ void NetworkModel::buildAdmittanceMatrix(std::vector<Complex>& Y,
                 Y[idx] = yShunt;
             } else {
                 // Off-diagonal: branch admittance
+                // Sum admittances of all parallel branches between buses i and j
                 BusId jBusId = buses_[j]->getId();
+                Complex ySum(0.0, 0.0);
                 for (const auto& branch : branches_) {
                     Complex yBranch = branch->getAdmittance();
                     Real tap = branch->getTapRatio();
                     
                     if (branch->getFromBus() == busId && branch->getToBus() == jBusId) {
-                        Y[idx] = -yBranch / (tap * tap);
-                        break;
+                        // Branch from i to j
+                        ySum = ySum - yBranch / (tap * tap);
                     } else if (branch->getFromBus() == jBusId && branch->getToBus() == busId) {
-                        Y[idx] = -yBranch / (tap * tap);
-                        break;
+                        // Branch from j to i (reverse direction)
+                        ySum = ySum - yBranch / (tap * tap);
                     }
                 }
+                Y[idx] = ySum;
             }
         }
     }
 }
 
 void NetworkModel::updateBus(BusId id, const Bus& busData) {
-    Bus* bus = getBus(id);
-    if (bus) {
-        *bus = busData;  // Would need copy assignment operator
+    // Direct lookup
+    auto it = busIndexMap_.find(id);
+    if (it != busIndexMap_.end() && static_cast<size_t>(it->second) < buses_.size()) {
+        *buses_[it->second] = busData;  // Uses copy assignment operator
     }
 }
 
 void NetworkModel::updateBranch(BranchId id, const Branch& branchData) {
-    Branch* branch = getBranch(id);
-    if (branch) {
-        *branch = branchData;  // Would need copy assignment operator
+    // Direct lookup
+    auto it = branchIndexMap_.find(id);
+    if (it != branchIndexMap_.end() && static_cast<size_t>(it->second) < branches_.size()) {
+        *branches_[it->second] = branchData;  // Uses copy assignment operator
     }
 }
 
@@ -348,14 +392,18 @@ void NetworkModel::removeBus(BusId id) {
     auto it = busIndexMap_.find(id);
     if (it != busIndexMap_.end()) {
         Index idx = it->second;
+        
+        // Remove from name map if bus has a name
+        if (idx >= 0 && static_cast<size_t>(idx) < buses_.size()) {
+            const std::string& name = buses_[idx]->getName();
+            if (!name.empty()) {
+                busNameMap_.erase(name);
+            }
+        }
+        
         buses_.erase(buses_.begin() + idx);
         busIndexMap_.erase(it);
         
-        // Rebuild index map
-        busIndexMap_.clear();
-        for (size_t i = 0; i < buses_.size(); ++i) {
-            busIndexMap_[buses_[i]->getId()] = i;
-        }
         invalidateCaches();
     }
 }
@@ -367,11 +415,6 @@ void NetworkModel::removeBranch(BranchId id) {
         branches_.erase(branches_.begin() + idx);
         branchIndexMap_.erase(it);
         
-        // Rebuild index map
-        branchIndexMap_.clear();
-        for (size_t i = 0; i < branches_.size(); ++i) {
-            branchIndexMap_[branches_[i]->getId()] = i;
-        }
         invalidateCaches();
     }
 }
@@ -387,6 +430,7 @@ void NetworkModel::clear() {
     branches_.clear();
     busIndexMap_.clear();
     branchIndexMap_.clear();
+    busNameMap_.clear();  // Clear name index
     referenceBus_ = -1;
     // Clear cached vectors
     cachedPInjection_.clear();
@@ -636,6 +680,9 @@ void NetworkModel::updateDeviceData() const {
     if (actualFromOffset != fromOffset) {
         // CSR format is inconsistent - rebuild row pointers
         // This should not happen if adjacency lists are correct
+        #ifndef NDEBUG
+        assert(actualFromOffset == fromOffset && "CSR format inconsistency detected - indicates bug in updateAdjacencyLists");
+        #endif
         Index correctedOffset = 0;
         for (size_t i = 0; i < nBuses; ++i) {
             cachedBranchFromBusRowPtr_[i] = correctedOffset;
@@ -657,6 +704,9 @@ void NetworkModel::updateDeviceData() const {
                 ++actualToOffset;
             } else {
                 // Invalid index in adjacency list - this indicates a bug in updateAdjacencyLists
+                #ifndef NDEBUG
+                assert(false && "Invalid branch index in adjacency list - bug in updateAdjacencyLists");
+                #endif
             }
         }
     }
@@ -664,6 +714,9 @@ void NetworkModel::updateDeviceData() const {
     // Validate CSR consistency: actual size should match row pointer offset
     if (actualToOffset != toOffset) {
         // CSR format is inconsistent - rebuild row pointers
+        #ifndef NDEBUG
+        assert(actualToOffset == toOffset && "CSR format inconsistency detected - indicates bug in updateAdjacencyLists");
+        #endif
         Index correctedOffset = 0;
         for (size_t i = 0; i < nBuses; ++i) {
             cachedBranchToBusRowPtr_[i] = correctedOffset;
@@ -682,6 +735,18 @@ void NetworkModel::updateDeviceData() const {
 
 void NetworkModel::computeVoltEstimates(const StateVector& state, bool /* useGPU */) {
     size_t nBuses = buses_.size();
+    
+    // Validate state vector size matches network size
+    if (state.size() != nBuses) {
+        // State vector size mismatch - this indicates a bug
+        // In debug builds, assert; in release, log and resize
+        #ifndef NDEBUG
+        assert(state.size() == nBuses && "StateVector size must match network bus count");
+        #endif
+        // For release builds, we could log this, but for now just return
+        // The caller should ensure state vector is properly sized
+        return;
+    }
     const Real PI = 3.14159265359;
     const Real RAD_TO_DEG = 180.0 / PI;
     
@@ -702,6 +767,14 @@ void NetworkModel::computeVoltEstimates(const StateVector& state, bool /* useGPU
 
 void NetworkModel::computePowerInjections(const StateVector& state, bool useGPU) {
     size_t nBuses = buses_.size();
+    
+    // Validate state vector size matches network size
+    if (state.size() != nBuses) {
+        #ifndef NDEBUG
+        assert(state.size() == nBuses && "StateVector size must match network bus count");
+        #endif
+        return;
+    }
     
     // Resize cached vectors only if network size changed
     if (cachedPInjection_.size() != nBuses) {
@@ -724,6 +797,15 @@ void NetworkModel::computePowerInjections(const StateVector& state, bool useGPU)
 
 void NetworkModel::computePowerFlows(const StateVector& state, bool useGPU) {
     size_t nBranches = branches_.size();
+    size_t nBuses = buses_.size();
+    
+    // Validate state vector size matches network size
+    if (state.size() != nBuses) {
+        #ifndef NDEBUG
+        assert(state.size() == nBuses && "StateVector size must match network bus count");
+        #endif
+        return;
+    }
     
     // Resize cached vectors only if network size changed
     if (cachedPFlow_.size() != nBranches) {

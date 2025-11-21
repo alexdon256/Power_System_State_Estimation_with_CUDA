@@ -13,6 +13,13 @@ TelemetryData::TelemetryData() {
 }
 
 void TelemetryData::addMeasurement(std::unique_ptr<MeasurementModel> measurement) {
+    if (!measurement) return;
+    
+    const std::string& deviceId = measurement->getDeviceId();
+    if (!deviceId.empty()) {
+        // Update device ID index
+        deviceIdIndex_[deviceId] = measurements_.size();
+    }
     measurements_.push_back(std::move(measurement));
 }
 
@@ -63,8 +70,57 @@ void TelemetryData::getWeightMatrix(std::vector<Real>& weights) const {
     }
 }
 
+MeasurementModel* TelemetryData::findMeasurementByDeviceId(const std::string& deviceId) {
+    if (deviceId.empty()) return nullptr;
+    
+    auto it = deviceIdIndex_.find(deviceId);
+    if (it != deviceIdIndex_.end() && it->second < measurements_.size()) {
+        return measurements_[it->second].get();
+    }
+    return nullptr;
+}
+
+const MeasurementModel* TelemetryData::findMeasurementByDeviceId(const std::string& deviceId) const {
+    if (deviceId.empty()) return nullptr;
+    
+    auto it = deviceIdIndex_.find(deviceId);
+    if (it != deviceIdIndex_.end() && it->second < measurements_.size()) {
+        return measurements_[it->second].get();
+    }
+    return nullptr;
+}
+
+bool TelemetryData::removeMeasurement(const std::string& deviceId) {
+    if (deviceId.empty()) return false;
+    
+    auto it = deviceIdIndex_.find(deviceId);
+    if (it == deviceIdIndex_.end()) return false;
+    
+    size_t idx = it->second;
+    
+    
+    // Remove measurement
+    measurements_.erase(measurements_.begin() + idx);
+    deviceIdIndex_.erase(it);
+    return true;
+}
+
+bool TelemetryData::updateMeasurement(const std::string& deviceId, Real value, Real stdDev, int64_t timestamp) {
+    MeasurementModel* m = findMeasurementByDeviceId(deviceId);
+    if (!m) return false;
+    
+    m->setValue(value);
+    m->setStdDev(stdDev);
+    if (timestamp >= 0) {
+        m->setTimestamp(timestamp);
+    }
+    return true;
+}
+
+
 void TelemetryData::clear() {
     measurements_.clear();
+    deviceIdIndex_.clear();
 }
 
 } // namespace model

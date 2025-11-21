@@ -109,6 +109,10 @@ void Branch::computePowerFlowMW(const StateVector& state, Index fromBusIdx, Inde
 Real Branch::computeCurrentMagnitude(Real pFlow, Real qFlow, Real vFrom) const {
     // I = |S| / V = sqrt(P² + Q²) / V
     // Optimized: use hypot for better numerical stability and potentially faster
+    // Check for zero voltage to avoid division by zero
+    if (std::abs(vFrom) < 1e-12) {
+        return 0.0;  // Return zero current for zero voltage
+    }
     Real sMag = std::hypot(pFlow, qFlow);  // More accurate than sqrt(p²+q²)
     return sMag / vFrom;  // Current in p.u.
 }
@@ -120,6 +124,26 @@ void Branch::setPowerFlow(Real p, Real q, Real pMW, Real qMVAR, Real iAmps, Real
     qMVAR_ = qMVAR;
     iAmps_ = iAmps;
     iPU_ = iPU;
+}
+
+Branch& Branch::operator=(const Branch& other) {
+    if (this != &other) {
+        // id_, fromBus_, toBus_ are not copied (they identify the branch)
+        r_ = other.r_;
+        x_ = other.x_;
+        b_ = other.b_;
+        mvaRating_ = other.mvaRating_;
+        tapRatio_ = other.tapRatio_;
+        phaseShift_ = other.phaseShift_;
+        // Computed values are not copied (they're recalculated)
+        pFlow_ = other.pFlow_;
+        qFlow_ = other.qFlow_;
+        pMW_ = other.pMW_;
+        qMVAR_ = other.qMVAR_;
+        iAmps_ = other.iAmps_;
+        iPU_ = other.iPU_;
+    }
+    return *this;
 }
 
 } // namespace model

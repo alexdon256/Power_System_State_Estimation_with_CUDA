@@ -45,15 +45,6 @@ enum class MeasurementType {
     PSEUDO            // Pseudo measurement (forecast)
 };
 
-// Device types
-enum class DeviceType {
-    POWER_METER,
-    VOLTAGE_TRANSDUCER,
-    CURRENT_TRANSFORMER,
-    PMU,
-    SYNTHESIZED       // Virtual/pseudo measurement
-};
-
 // Measurement status
 enum class MeasurementStatus {
     VALID,

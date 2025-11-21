@@ -85,7 +85,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(SOURCES
     src/model/NetworkModel.cpp
     src/model/MeasurementModel.cpp
-    src/model/DeviceModel.cpp
     src/model/StateVector.cpp
     src/model/TelemetryData.cpp
     src/interface/ModelLoader.cpp

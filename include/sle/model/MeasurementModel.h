@@ -8,7 +8,6 @@
 #define SLE_MODEL_MEASUREMENTMODEL_H
 
 #include <sle/Types.h>
-#include <sle/model/DeviceModel.h>
 #include <memory>
 #include <string>
 

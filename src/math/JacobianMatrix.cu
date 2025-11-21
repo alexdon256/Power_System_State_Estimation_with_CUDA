@@ -34,7 +34,6 @@ void JacobianMatrix::buildStructure(const NetworkModel& network,
     // Build CSR structure
     for (size_t i = 0; i < measurements.size(); ++i) {
         const auto& m = measurements[i];
-        Index rowStart = colInd.size();
         
         switch (m->getType()) {
             case MeasurementType::P_FLOW:
@@ -50,13 +49,36 @@ void JacobianMatrix::buildStructure(const NetworkModel& network,
             }
             case MeasurementType::P_INJECTION:
             case MeasurementType::Q_INJECTION: {
-                // Depends on all connected buses
+                // Depends on connected buses only (sparse structure)
+                // Power injection at a bus depends on:
+                // 1. The bus itself (angle and magnitude)
+                // 2. All buses directly connected via branches
                 Index busIdx = network.getBusIndex(m->getLocation());
                 if (busIdx >= 0) {
-                    // Add all buses (simplified - should only add connected ones)
-                    for (Index j = 0; j < nCols_ / 2; ++j) {
-                        colInd.push_back(j);
-                        colInd.push_back(nCols_ / 2 + j);
+                    // Add the bus itself
+                    colInd.push_back(busIdx);  // dP/dθ or dQ/dθ
+                    colInd.push_back(nCols_ / 2 + busIdx);  // dP/dV or dQ/dV
+                    
+                    // Add all connected buses (via branches)
+                    auto branchesFrom = network.getBranchesFromBus(m->getLocation());
+                    auto branchesTo = network.getBranchesToBus(m->getLocation());
+                    
+                    // Add buses connected via outgoing branches
+                    for (const auto* branch : branchesFrom) {
+                        Index toBus = network.getBusIndex(branch->getToBus());
+                        if (toBus >= 0 && toBus != busIdx) {
+                            colInd.push_back(toBus);  // dP/dθ or dQ/dθ
+                            colInd.push_back(nCols_ / 2 + toBus);  // dP/dV or dQ/dV
+                        }
+                    }
+                    
+                    // Add buses connected via incoming branches
+                    for (const auto* branch : branchesTo) {
+                        Index fromBus = network.getBusIndex(branch->getFromBus());
+                        if (fromBus >= 0 && fromBus != busIdx) {
+                            colInd.push_back(fromBus);  // dP/dθ or dQ/dθ
+                            colInd.push_back(nCols_ / 2 + fromBus);  // dP/dV or dQ/dV
+                        }
                     }
                 }
                 break;

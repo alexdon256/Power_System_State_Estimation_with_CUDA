@@ -127,11 +127,44 @@ BadDataResult BadDataDetector::detectBadData(
 
 void BadDataDetector::removeBadMeasurements(model::TelemetryData& telemetry,
                                            const BadDataResult& result) {
-    (void)telemetry;  // May be used in future implementation
-    (void)result;  // May be used in future implementation
-    // Mark bad measurements as invalid
-    // Note: TelemetryData would need to support removal/status update
-    // For now, this is a placeholder
+    // Remove measurements by device ID (preferred method - O(1) average case)
+    for (const std::string& deviceId : result.badDeviceIds) {
+        if (!deviceId.empty()) {
+            telemetry.removeMeasurement(deviceId);
+        }
+    }
+    
+    // Also handle indices if device IDs are not available
+    // Extract device IDs from indices before any removals (to avoid index shifting)
+    if (!result.badMeasurementIndices.empty()) {
+        const auto& measurements = telemetry.getMeasurements();
+        std::vector<std::string> deviceIdsFromIndices;
+        
+        // Collect device IDs from indices (before any removals)
+        for (Index idx : result.badMeasurementIndices) {
+            if (idx >= 0 && static_cast<size_t>(idx) < measurements.size()) {
+                const std::string& deviceId = measurements[idx]->getDeviceId();
+                if (!deviceId.empty()) {
+                    // Check if not already in badDeviceIds (avoid duplicate removal)
+                    bool alreadyRemoved = false;
+                    for (const std::string& existingId : result.badDeviceIds) {
+                        if (existingId == deviceId) {
+                            alreadyRemoved = true;
+                            break;
+                        }
+                    }
+                    if (!alreadyRemoved) {
+                        deviceIdsFromIndices.push_back(deviceId);
+                    }
+                }
+            }
+        }
+        
+        // Remove by device ID (avoids index shifting issues)
+        for (const std::string& deviceId : deviceIdsFromIndices) {
+            telemetry.removeMeasurement(deviceId);
+        }
+    }
 }
 
 std::vector<Real> BadDataDetector::computeNormalizedResiduals(
