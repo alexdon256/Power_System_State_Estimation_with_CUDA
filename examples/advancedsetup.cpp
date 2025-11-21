@@ -32,6 +32,7 @@
 #include <sle/model/Branch.h>
 #include <sle/model/NetworkModel.h>
 #include <iostream>
+#include <iomanip>
 #include <cmath>
 #include <set>
 
@@ -192,33 +193,138 @@ int main(int argc, char* argv[]) {
         std::cout << "  Hierarchical estimation available\n\n";
         
         // ========================================================================
-        // STEP 8: Run State Estimation with Advanced Features
+        // STEP 8: Run Standard WLS State Estimation
         // ========================================================================
-        std::cout << "=== Running State Estimation ===\n";
+        std::cout << "=== Running Standard WLS Estimation ===\n";
         sle::interface::StateEstimator estimator;
         estimator.setNetwork(std::make_shared<sle::model::NetworkModel>(*network));
         estimator.setTelemetryData(telemetry);
         estimator.configureForOffline(1e-8, 50, true);
         
-        auto result = estimator.estimate();
-        std::cout << "✓ Estimation: " << (result.converged ? "Converged" : "Failed") << "\n";
-        std::cout << "  Iterations: " << result.iterations << "\n";
-        std::cout << "  Final norm: " << result.finalNorm << "\n\n";
+        auto wlsResult = estimator.estimate();
+        std::cout << "✓ WLS Estimation: " << (wlsResult.converged ? "Converged" : "Failed") << "\n";
+        std::cout << "  Iterations: " << wlsResult.iterations << "\n";
+        std::cout << "  Final norm: " << wlsResult.finalNorm << "\n";
+        std::cout << "  Objective value: " << wlsResult.objectiveValue << "\n\n";
         
         // ========================================================================
-        // STEP 9: Compute and Extract Values
+        // STEP 9: Run Robust Estimation
         // ========================================================================
-        std::cout << "=== Computing Estimated Values ===\n";
-        if (result.state) {
+        std::cout << "=== Running Robust Estimation ===\n";
+        if (!wlsResult.state) {
+            std::cerr << "ERROR: WLS estimation did not produce a valid state\n";
+            return 1;
+        }
+        
+        // Use WLS result as initial state for robust estimation
+        auto robustState = std::make_unique<sle::model::StateVector>(*wlsResult.state);
+        auto robustResult = robustEstimator.estimate(*robustState, *network, *telemetry);
+        
+        std::cout << "✓ Robust Estimation: " << (robustResult.converged ? "Converged" : "Failed") << "\n";
+        std::cout << "  IRLS Iterations: " << robustResult.iterations << "\n";
+        std::cout << "  Final norm: " << robustResult.finalNorm << "\n";
+        std::cout << "  Objective value: " << robustResult.objectiveValue << "\n";
+        std::cout << "  Message: " << robustResult.message << "\n";
+        std::cout << "  Final robust weights computed for " << robustResult.weights.size() << " measurements\n\n";
+        
+        // ========================================================================
+        // STEP 10: Compute Values from Robust Estimation
+        // ========================================================================
+        std::cout << "=== Computing Values from Robust Estimation ===\n";
+        if (robustResult.state) {
             bool useGPU = true;
-            network->computeVoltEstimates(*result.state, useGPU);
-            network->computePowerInjections(*result.state, useGPU);
-            network->computePowerFlows(*result.state, useGPU);
+            network->computeVoltEstimates(*robustResult.state, useGPU);
+            network->computePowerInjections(*robustResult.state, useGPU);
+            network->computePowerFlows(*robustResult.state, useGPU);
             std::cout << "✓ All values computed and stored in Bus/Branch objects\n\n";
+            
+            // Display computed values
+            std::cout << "=== Estimated Values (Robust Estimation) ===\n";
+            std::cout << std::fixed << std::setprecision(4);
+            
+            // Voltage estimates
+            std::cout << "\nVoltage Estimates:\n";
+            std::cout << "Bus ID | V (p.u.) | V (kV)  | Angle (deg)\n";
+            std::cout << "-------|----------|---------|------------\n";
+            auto buses = network->getBuses();
+            for (auto* bus : buses) {
+                if (bus) {
+                    std::cout << std::setw(6) << bus->getId() << " | "
+                              << std::setw(8) << bus->getVPU() << " | "
+                              << std::setw(7) << bus->getVKV() << " | "
+                              << std::setw(11) << bus->getThetaDeg() << "\n";
+                }
+            }
+            
+            // Power injections
+            std::cout << "\nPower Injections:\n";
+            std::cout << "Bus ID | P (MW)   | Q (MVAR)\n";
+            std::cout << "-------|----------|----------\n";
+            for (auto* bus : buses) {
+                if (bus) {
+                    std::cout << std::setw(6) << bus->getId() << " | "
+                              << std::setw(9) << bus->getPMW() << " | "
+                              << std::setw(9) << bus->getQMVAR() << "\n";
+                }
+            }
+            
+            // Power flows
+            std::cout << "\nPower Flows:\n";
+            std::cout << "Branch ID | From | To  | P (MW)   | Q (MVAR) | I (A)    | I (p.u.)\n";
+            std::cout << "----------|------|-----|----------|----------|----------|----------\n";
+            auto branches = network->getBranches();
+            for (auto* branch : branches) {
+                if (branch) {
+                    std::cout << std::setw(9) << branch->getId() << " | "
+                              << std::setw(4) << branch->getFromBus() << " | "
+                              << std::setw(3) << branch->getToBus() << " | "
+                              << std::setw(9) << branch->getPMW() << " | "
+                              << std::setw(9) << branch->getQMVAR() << " | "
+                              << std::setw(9) << branch->getIAmps() << " | "
+                              << std::setw(9) << branch->getIPU() << "\n";
+                }
+            }
+            
+            // Comparison: WLS vs Robust
+            std::cout << "\n=== Comparison: WLS vs Robust Estimation ===\n";
+            std::cout << std::scientific << std::setprecision(3);
+            std::cout << "WLS Final Norm:      " << wlsResult.finalNorm << "\n";
+            std::cout << "Robust Final Norm:   " << robustResult.finalNorm << "\n";
+            std::cout << "WLS Objective:       " << wlsResult.objectiveValue << "\n";
+            std::cout << "Robust Objective:    " << robustResult.objectiveValue << "\n";
+            std::cout << "WLS Iterations:      " << wlsResult.iterations << "\n";
+            std::cout << "Robust IRLS Iters:   " << robustResult.iterations << "\n";
+            
+            // Show which measurements were down-weighted
+            std::cout << "\nRobust Weights (measurements with weight < 1.0 were down-weighted):\n";
+            int downWeightedCount = 0;
+            const auto& measurements = telemetry->getMeasurements();
+            for (size_t i = 0; i < measurements.size() && i < robustResult.weights.size(); ++i) {
+                if (robustResult.weights[i] < 0.99) {  // Slightly less than 1.0 to account for floating point
+                    downWeightedCount++;
+                    if (downWeightedCount <= 10) {  // Show first 10
+                        std::cout << "  Measurement " << i << " (" << measurements[i]->getDeviceId() 
+                                  << "): weight = " << std::fixed << std::setprecision(4) 
+                                  << robustResult.weights[i] << "\n";
+                    }
+                }
+            }
+            if (downWeightedCount > 10) {
+                std::cout << "  ... and " << (downWeightedCount - 10) << " more\n";
+            }
+            if (downWeightedCount == 0) {
+                std::cout << "  No measurements were down-weighted (all data is good)\n";
+            } else {
+                std::cout << "  Total down-weighted: " << downWeightedCount << " measurements\n";
+            }
+            std::cout << "\n";
+        } else {
+            std::cerr << "ERROR: Robust estimation did not produce a valid state\n";
+            return 1;
         }
         
         // ========================================================================
-        // STEP 10: Summary
+        // STEP 11: Summary
         // ========================================================================
         std::cout << "=== Advanced Features Summary ===\n";
         std::cout << "✓ Robust estimation: Available (Huber, Bi-square, Cauchy, Welsch)\n";

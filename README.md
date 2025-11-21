@@ -155,7 +155,7 @@ The `examples/` directory contains consolidated setup examples:
 - `offlinesetup.cpp` - **Offline analysis setup** with high accuracy, comprehensive validation, and detailed reporting
 - `realtimesetup.cpp` - **Production real-time setup** with asynchronous telemetry processing, incremental estimation, monitoring, and comprehensive reporting
 - `hybridsetup.cpp` - **Hybrid setup** combining fast WLS with periodic robust estimation and bad data detection
-- `advancedsetup.cpp` - **Advanced features setup** including robust estimation, load flow, optimal placement, transformers, PMU, and multi-area
+- `advancedsetup.cpp` - **Advanced features setup** including robust estimation with value extraction and WLS comparison, load flow, optimal placement, transformers, PMU, and multi-area
 
 **See [EXAMPLES_COMPARISON.md](docs/EXAMPLES_COMPARISON.md) for detailed comparison of hybrid vs real-time setups.**
 

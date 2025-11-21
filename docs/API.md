@@ -346,12 +346,54 @@ config.tuningConstant = 1.345;  // Tuning constant for the weight function
 robust.setConfig(config);
 
 // Run robust state estimation
-// result: StateEstimationResult (same structure as standard estimation)
-//         Typically more accurate when bad data is present
+// result: RobustResult containing:
+//         - converged: Boolean indicating convergence
+//         - iterations: Number of IRLS iterations
+//         - finalNorm: Final residual norm
+//         - objectiveValue: Final objective function value
+//         - weights: Vector of final robust weights for each measurement
+//         - state: Unique pointer to estimated StateVector
+//         - message: Status message
 // state: Initial StateVector (can be from previous estimation or flat start)
 // network: NetworkModel reference
 // telemetry: TelemetryData reference
 auto result = robust.estimate(state, network, telemetry);
+
+// Compute values from robust estimation result
+if (result.state) {
+    bool useGPU = true;
+    network->computeVoltEstimates(*result.state, useGPU);
+    network->computePowerInjections(*result.state, useGPU);
+    network->computePowerFlows(*result.state, useGPU);
+    
+    // Access computed values via Bus/Branch getters
+    auto buses = network->getBuses();
+    for (auto* bus : buses) {
+        Real vPU = bus->getVPU();           // Voltage in p.u.
+        Real vKV = bus->getVKV();           // Voltage in kV
+        Real thetaDeg = bus->getThetaDeg(); // Angle in degrees
+        Real pMW = bus->getPMW();           // Active power injection in MW
+        Real qMVAR = bus->getQMVAR();       // Reactive power injection in MVAR
+    }
+    
+    auto branches = network->getBranches();
+    for (auto* branch : branches) {
+        Real pMW = branch->getPMW();       // Active power flow in MW
+        Real qMVAR = branch->getQMVAR();    // Reactive power flow in MVAR
+        Real iAmps = branch->getIAmps();     // Current magnitude in Amperes
+        Real iPU = branch->getIPU();         // Current magnitude in p.u.
+    }
+}
+
+// Analyze robust weights to identify down-weighted measurements
+// Measurements with weight < 1.0 were down-weighted (potential bad data)
+const auto& measurements = telemetry.getMeasurements();
+for (size_t i = 0; i < measurements.size() && i < result.weights.size(); ++i) {
+    if (result.weights[i] < 0.99) {
+        std::cout << "Measurement " << i << " (" << measurements[i]->getDeviceId()
+                  << ") was down-weighted: weight = " << result.weights[i] << "\n";
+    }
+}
 ```
 
 ## Load Flow
@@ -713,7 +755,9 @@ sle::io::OutputFormatter::writeToFile("results.json", results, "json");
 
 ## Extracting Computed Values
 
-After state estimation, computed values (voltage, power, current) are stored directly in Bus and Branch objects for easy access. This provides a clean, object-oriented API that works seamlessly with area/zone/region hierarchies.
+After state estimation (standard WLS or robust estimation), computed values (voltage, power, current) are stored directly in Bus and Branch objects for easy access. This provides a clean, object-oriented API that works seamlessly with area/zone/region hierarchies.
+
+**Note**: The same value extraction methods work for both standard WLS and robust estimation results. Simply pass the `StateVector` from either estimation method to the compute functions.
 
 ### Computing and Storing Values
 
@@ -797,10 +841,10 @@ for (auto* branch : branches) {
 }
 ```
 
-### Complete Example
+### Complete Example: Standard WLS
 
 ```cpp
-// Run state estimation
+// Run standard WLS state estimation
 auto result = estimator.estimate();
 
 if (result.converged && result.state) {
@@ -821,6 +865,57 @@ if (result.converged && result.state) {
         Real pMW = branch->getPMW();
         Real iAmps = branch->getIAmps();
         // Use values for overload detection, etc.
+    }
+}
+```
+
+### Complete Example: Robust Estimation
+
+```cpp
+#include <sle/math/RobustEstimator.h>
+
+// Run robust state estimation
+sle::math::RobustEstimator robustEstimator;
+sle::math::RobustEstimatorConfig config;
+config.weightFunction = sle::math::RobustWeightFunction::HUBER;
+config.tuningConstant = 1.345;
+config.tolerance = 1e-6;
+config.maxIterations = 50;
+config.useGPU = true;
+robustEstimator.setConfig(config);
+
+// Use WLS result as initial state (optional but recommended)
+auto wlsResult = estimator.estimate();
+auto robustState = std::make_unique<sle::model::StateVector>(*wlsResult.state);
+auto robustResult = robustEstimator.estimate(*robustState, *network, *telemetry);
+
+if (robustResult.converged && robustResult.state) {
+    // Compute all values from robust estimation (GPU-accelerated)
+    bool useGPU = true;
+    network->computeVoltEstimates(*robustResult.state, useGPU);
+    network->computePowerInjections(*robustResult.state, useGPU);
+    network->computePowerFlows(*robustResult.state, useGPU);
+    
+    // Extract and use values (same API as standard WLS)
+    for (auto* bus : network->getBuses()) {
+        Real v = bus->getVPU();           // Voltage from robust estimation
+        Real pMW = bus->getPInjectionMW(); // Power injection from robust estimation
+        // Use values for monitoring, control, etc.
+    }
+    
+    for (auto* branch : network->getBranches()) {
+        Real pMW = branch->getPMW();      // Power flow from robust estimation
+        Real iAmps = branch->getIAmps();   // Current from robust estimation
+        // Use values for overload detection, etc.
+    }
+    
+    // Analyze robust weights to identify down-weighted measurements
+    const auto& measurements = telemetry->getMeasurements();
+    for (size_t i = 0; i < measurements.size() && i < robustResult.weights.size(); ++i) {
+        if (robustResult.weights[i] < 0.99) {
+            std::cout << "Measurement " << measurements[i]->getDeviceId()
+                      << " was down-weighted: weight = " << robustResult.weights[i] << "\n";
+        }
     }
 }
 ```

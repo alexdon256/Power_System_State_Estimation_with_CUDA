@@ -72,15 +72,26 @@ if (cycleCount % 5 == 0) {
 
 #### Advanced Setup
 - **Method**: Standard WLS + Robust + Load Flow
-- **Tolerance**: 1e-8 (high accuracy)
-- **Max Iterations**: 50
-- **Mode**: Single estimation with advanced features
-- **Focus**: Feature demonstration
+- **Tolerance**: 1e-8 (WLS), 1e-6 (Robust)
+- **Max Iterations**: 50 (WLS), 50 IRLS (Robust)
+- **Mode**: Sequential estimation (WLS → Robust) with advanced features
+- **Focus**: Feature demonstration with robust estimation and value extraction
 
 ```cpp
+// Step 1: Standard WLS
 estimator.configureForOffline(1e-8, 50, true);
-auto result = estimator.estimate();
-// Also includes: load flow, optimal placement, multi-area
+auto wlsResult = estimator.estimate();
+
+// Step 2: Robust estimation (uses WLS result as initial state)
+auto robustState = std::make_unique<StateVector>(*wlsResult.state);
+auto robustResult = robustEstimator.estimate(*robustState, *network, *telemetry);
+
+// Step 3: Compute values from robust estimation
+network->computeVoltEstimates(*robustResult.state, useGPU);
+network->computePowerInjections(*robustResult.state, useGPU);
+network->computePowerFlows(*robustResult.state, useGPU);
+
+// Also includes: load flow, optimal placement, multi-area, WLS vs Robust comparison
 ```
 
 **Winner**: 
@@ -181,10 +192,11 @@ if (cycleCount % 5 == 0) {
 ```
 
 #### Advanced Setup
-- **Detection**: ❌ No
-- **Automatic Handling**: ✅ Yes (robust estimation available)
-- **Timing**: N/A
-- **Method**: Robust estimation only
+- **Detection**: ❌ No (but shows robust weights analysis)
+- **Automatic Handling**: ✅ Yes (robust estimation runs and down-weights outliers)
+- **Timing**: After WLS estimation
+- **Method**: Robust estimation (IRLS with M-estimators) + weight analysis
+- **Features**: Shows which measurements were down-weighted, WLS vs Robust comparison
 
 **Winner**: Hybrid (automatic handling + periodic detection)
 
@@ -382,11 +394,13 @@ auto multiResult = multiArea.estimateHierarchical();
 - **Access**: N/A
 
 #### Advanced Setup
-- **Voltage Estimates**: ✅ Yes
-- **Power Injections**: ✅ Yes
-- **Power Flows**: ✅ Yes
-- **Current Values**: ✅ Yes
+- **Voltage Estimates**: ✅ Yes (from robust estimation)
+- **Power Injections**: ✅ Yes (from robust estimation)
+- **Power Flows**: ✅ Yes (from robust estimation)
+- **Current Values**: ✅ Yes (from robust estimation)
 - **Access**: Via Bus/Branch getters
+- **Display**: Detailed tables showing all computed values
+- **Comparison**: WLS vs Robust results shown side-by-side
 
 **Winner**: Offline, Real-Time, and Advanced
 
@@ -457,20 +471,26 @@ auto multiResult = multiArea.estimateHierarchical();
 
 ### Use Advanced Setup When:
 - ✅ You want to **demonstrate all features** (robust, load flow, multi-area, etc.)
+- ✅ You need **robust estimation** with detailed value extraction and comparison
+- ✅ You want to **compare WLS vs Robust** estimation results side-by-side
+- ✅ You need to **analyze robust weights** to identify down-weighted measurements
 - ✅ You need **load flow** for initial state or validation
 - ✅ You're doing **planning studies** (optimal measurement placement)
 - ✅ You have **transformers** requiring accurate modeling
 - ✅ You're integrating **PMU data**
 - ✅ You're working with **large-scale systems** (multi-area)
-- ✅ You need **high accuracy** (1e-8 tolerance)
+- ✅ You need **high accuracy** (1e-8 tolerance) with robust handling
 
 **Example Use Cases:**
 - Feature demonstration and testing
+- Comparing WLS and robust estimation methods
+- Analyzing which measurements are down-weighted by robust estimator
 - Planning studies for meter placement
 - Systems with transformers requiring accurate modeling
 - PMU integration for enhanced observability
 - Large-scale systems requiring distributed estimation
 - Research applications exploring all capabilities
+- Understanding robust estimation behavior with bad data
 
 ---
 
@@ -491,6 +511,8 @@ auto multiResult = multiArea.estimateHierarchical();
 | Need multi-area | **Advanced Setup** |
 | Need PMU support | **Advanced Setup** |
 | Need transformer modeling | **Advanced Setup** |
+| Need robust estimation with value extraction | **Advanced Setup** |
+| Want WLS vs Robust comparison | **Advanced Setup** |
 
 ---
 
