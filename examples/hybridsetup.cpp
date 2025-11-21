@@ -156,7 +156,8 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "=== Configuring Standard WLS Estimator ===\n";
         sle::interface::StateEstimator estimator;
-        estimator.setNetwork(std::make_shared<sle::model::NetworkModel>(*network));
+        // NetworkModel is non-copyable, so convert unique_ptr to shared_ptr
+        estimator.setNetwork(std::shared_ptr<sle::model::NetworkModel>(network.release()));
         estimator.setTelemetryData(telemetry);
         
         // Real-time mode: Fast, relaxed tolerance

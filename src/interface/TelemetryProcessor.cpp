@@ -36,7 +36,7 @@ void TelemetryProcessor::addMeasurement(const TelemetryUpdate& update) {
     updateMeasurement(update);
 }
 
-void TelemetryProcessor::removeMeasurement(const std::string& deviceId) {
+void TelemetryProcessor::removeMeasurement(const std::string& /* deviceId */) {
     std::lock_guard<std::mutex> lock(telemetryMutex_);
     if (!telemetry_) return;
     

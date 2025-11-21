@@ -182,10 +182,11 @@ bool StateEstimator::loadFromFiles(const std::string& networkFile, const std::st
         if (!network) {
             return false;
         }
-        setNetwork(std::make_shared<model::NetworkModel>(*network));
+        // NetworkModel is non-copyable (contains unique_ptr vectors), so convert to shared_ptr
+        setNetwork(std::shared_ptr<model::NetworkModel>(network.release()));
         
-        // Load telemetry data
-        auto telemetry = MeasurementLoader::loadTelemetry(telemetryFile, *network);
+        // Load telemetry data (use the network from the estimator)
+        auto telemetry = MeasurementLoader::loadTelemetry(telemetryFile, *getNetwork());
         if (!telemetry) {
             return false;
         }

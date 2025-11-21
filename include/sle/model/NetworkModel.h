@@ -26,6 +26,14 @@ public:
     NetworkModel();
     ~NetworkModel();
     
+    // Delete copy constructor and assignment (contains unique_ptr vectors)
+    NetworkModel(const NetworkModel&) = delete;
+    NetworkModel& operator=(const NetworkModel&) = delete;
+    
+    // Allow move constructor and assignment
+    NetworkModel(NetworkModel&&) = default;
+    NetworkModel& operator=(NetworkModel&&) = default;
+    
     // Bus management
     Bus* addBus(BusId id, const std::string& name = "");
     Bus* getBus(BusId id);

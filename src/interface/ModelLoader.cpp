@@ -51,7 +51,7 @@ std::unique_ptr<model::NetworkModel> ModelLoader::parseJSON(const std::string& f
     return sle::io::JSONParser::parseNetwork(filepath);
 }
 
-std::unique_ptr<model::NetworkModel> ModelLoader::parseMATPOWER(const std::string& filepath) {
+std::unique_ptr<model::NetworkModel> ModelLoader::parseMATPOWER(const std::string& /* filepath */) {
     // MATPOWER parser would go here
     // For now, return empty model
     return std::make_unique<model::NetworkModel>();

@@ -63,13 +63,14 @@ struct NetworkModel::CudaMemoryPool {
 #endif
 
 NetworkModel::NetworkModel() 
-    : baseMVA_(100.0)
 #ifdef USE_CUDA
-    , gpuMemoryPool_(std::make_unique<CudaMemoryPool>())
+    : gpuMemoryPool_(std::make_unique<CudaMemoryPool>())
     , deviceDataDirty_(true)
 #endif
-    , adjacencyDirty_(true)
+    : adjacencyDirty_(true)
+    , baseMVA_(100.0)
     , referenceBus_(-1) {
+    // Initialization order: CUDA members (if enabled) -> adjacencyDirty_ -> baseMVA_ -> referenceBus_
 }
 
 NetworkModel::~NetworkModel() = default;

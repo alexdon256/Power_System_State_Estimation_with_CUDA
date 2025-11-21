@@ -32,7 +32,7 @@ std::unique_ptr<model::TelemetryData> MeasurementLoader::loadTelemetry(
 }
 
 std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromCSV(
-    const std::string& filepath, const model::NetworkModel& network) {
+    const std::string& filepath, const model::NetworkModel& /* network */) {
     
     auto telemetry = std::make_unique<model::TelemetryData>();
     
@@ -84,7 +84,7 @@ std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromCSV(
 }
 
 std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromJSON(
-    const std::string& filepath, const model::NetworkModel& network) {
+    const std::string& /* filepath */, const model::NetworkModel& /* network */) {
     
     // Simplified - would use proper JSON library
     auto telemetry = std::make_unique<model::TelemetryData>();
