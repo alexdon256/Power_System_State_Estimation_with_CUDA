@@ -54,11 +54,11 @@ Complete guide to all documentation in the State Estimation project.
 ## Examples
 
 All examples include detailed comments:
-- `basic_example.cpp` - Complete workflow
-- `realtime_example.cpp` - Real-time updates with comparison reports
-- `observability_example.cpp` - Observability analysis
-- `advanced_features_example.cpp` - All features including multi-area
-- `hybrid_robust_example.cpp` - Hybrid WLS + robust estimation
+- `offlinesetup.cpp` - Offline analysis with high accuracy, comprehensive validation, and detailed reporting
+- `realtimesetup.cpp` - Production real-time setup with asynchronous telemetry processing, incremental estimation, monitoring, and comprehensive reporting
+- `hybridsetup.cpp` - Hybrid setup combining fast WLS with periodic robust estimation, bad data detection, pre-validation (data consistency, observability), optimal placement, and computed values extraction
+- `advancedsetup.cpp` - Advanced features setup including robust estimation with value extraction and WLS comparison, load flow, optimal placement, transformers, PMU, and multi-area
+- `observability_example.cpp` - Observability analysis and restoration
 
 ## Build & Configuration
 

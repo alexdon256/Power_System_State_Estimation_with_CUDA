@@ -189,11 +189,11 @@ std::cout << "Bad measurements: " << badCount << "\n";
 
 See the `examples/` directory (all with detailed comments):
 
-- `basic_example.cpp` - Complete workflow with step-by-step explanations
-- `realtime_example.cpp` - Real-time operation with comparison reports
+- `offlinesetup.cpp` - Offline analysis with high accuracy, comprehensive validation, and detailed reporting
+- `realtimesetup.cpp` - Production real-time setup with asynchronous telemetry processing, incremental estimation, monitoring, and comprehensive reporting
+- `hybridsetup.cpp` - Hybrid setup combining fast WLS with periodic robust estimation, bad data detection, pre-validation (data consistency, observability), optimal placement, and computed values extraction
+- `advancedsetup.cpp` - Advanced features setup including robust estimation with value extraction and WLS comparison, load flow, optimal placement, transformers, PMU, and multi-area
 - `observability_example.cpp` - Observability analysis and restoration
-- `advanced_features_example.cpp` - All features including multi-area, transformers, PMU
-- `hybrid_robust_example.cpp` - Hybrid approach combining WLS, robust estimation, and bad data detection
 
 ## Performance
 

@@ -154,7 +154,7 @@ auto placements = placement.findOptimalPlacement(network, existing, maxMeas, bud
 The `examples/` directory contains consolidated setup examples:
 - `offlinesetup.cpp` - **Offline analysis setup** with high accuracy, comprehensive validation, and detailed reporting
 - `realtimesetup.cpp` - **Production real-time setup** with asynchronous telemetry processing, incremental estimation, monitoring, and comprehensive reporting
-- `hybridsetup.cpp` - **Hybrid setup** combining fast WLS with periodic robust estimation and bad data detection
+- `hybridsetup.cpp` - **Hybrid setup** combining fast WLS with periodic robust estimation, bad data detection, pre-validation (data consistency, observability), optimal placement, and computed values extraction
 - `advancedsetup.cpp` - **Advanced features setup** including robust estimation with value extraction and WLS comparison, load flow, optimal placement, transformers, PMU, and multi-area
 
 **See [EXAMPLES_COMPARISON.md](docs/EXAMPLES_COMPARISON.md) for detailed comparison of hybrid vs real-time setups.**

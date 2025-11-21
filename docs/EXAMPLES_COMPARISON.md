@@ -13,13 +13,13 @@ This document compares all four setup examples to help you choose the right appr
 | **Incremental Estimation** | ❌ No | ✅ Yes | ✅ Yes | ❌ No |
 | **Robust Estimation** | ❌ No | ❌ No | ✅ Yes (periodic) | ✅ Yes |
 | **Bad Data Detection** | ✅ Yes (once) | ✅ Yes (once) | ✅ Yes (periodic) | ❌ No |
-| **System Monitoring** | ✅ Yes | ✅ Yes | ❌ No | ❌ No |
-| **Pre-Validation** | ✅ Yes | ✅ Yes | ❌ No | ❌ No |
-| **Observability Check** | ✅ Yes | ❌ No | ❌ No | ❌ No |
+| **System Monitoring** | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
+| **Pre-Validation** | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
+| **Observability Check** | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
 | **Report Generation** | ✅ Yes | ✅ Yes | ❌ No | ❌ No |
-| **Computed Values** | ✅ Yes | ✅ Yes | ❌ No | ✅ Yes |
+| **Computed Values** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | **Load Flow** | ❌ No | ❌ No | ❌ No | ✅ Yes |
-| **Optimal Placement** | ❌ No | ❌ No | ❌ No | ✅ Yes |
+| **Optimal Placement** | ❌ No | ❌ No | ✅ Yes | ✅ Yes |
 | **Transformer Config** | ❌ No | ❌ No | ❌ No | ✅ Yes |
 | **PMU Support** | ❌ No | ❌ No | ❌ No | ✅ Yes |
 | **Multi-Area** | ❌ No | ❌ No | ❌ No | ✅ Yes |
@@ -59,14 +59,31 @@ auto incResult = estimator.estimateIncremental();  // Updates
 - **Method**: WLS (every cycle) + Robust (every 5 cycles)
 - **Tolerance**: 1e-5 (WLS), 1e-6 (Robust)
 - **Max Iterations**: 15 (WLS), 20 IRLS (Robust)
-- **Mode**: Multi-layered strategy
-- **Focus**: Automatic bad data handling
+- **Mode**: Multi-layered strategy with pre-validation
+- **Focus**: Automatic bad data handling with comprehensive validation
+- **Pre-Validation**: Data consistency check, observability analysis, optimal placement
 
 ```cpp
+// Pre-validation (before estimation)
+DataConsistencyChecker consistencyChecker;
+auto consistency = consistencyChecker.checkConsistency(*telemetry, *network);
+
+ObservabilityAnalyzer analyzer;
+bool observable = analyzer.isFullyObservable(*network, *telemetry);
+if (!observable) {
+    OptimalPlacement placement;
+    auto placements = placement.findOptimalPlacement(*network, existing, 5);
+}
+
+// Real-time loop
 estimator.configureForRealTime(1e-5, 15, true);
 auto wlsResult = estimator.estimateIncremental();  // Every cycle
 if (cycleCount % 5 == 0) {
     robustEstimator.estimate(...);  // Periodic
+    // Compute values from robust estimation
+    network->computeVoltEstimates(*robustResult.state, useGPU);
+    network->computePowerInjections(*robustResult.state, useGPU);
+    network->computePowerFlows(*robustResult.state, useGPU);
 }
 ```
 
@@ -130,7 +147,8 @@ for (int i = 0; i < NUM_UPDATES; ++i) {
 - **Telemetry Processing**: ✅ Yes (asynchronous)
 - **Incremental Estimation**: ✅ Yes (faster convergence)
 - **Update Loop**: ✅ Yes (20 cycles simulated)
-- **Use Case**: Continuous operation with bad data handling
+- **Pre-Validation**: ✅ Yes (data consistency, observability, optimal placement)
+- **Use Case**: Continuous operation with bad data handling and comprehensive validation
 
 ```cpp
 estimator.getTelemetryProcessor().startRealTimeProcessing();
@@ -231,10 +249,10 @@ if (incResult.state) {
 ```
 
 #### Hybrid Setup
-- **Voltage Violations**: ❌ No
-- **Branch Overloads**: ❌ No
-- **Real-Time Monitoring**: ❌ No
-- **Violation Reporting**: ❌ No
+- **Voltage Violations**: ✅ Yes (displayed in computed values)
+- **Branch Overloads**: ✅ Yes (displayed in computed values)
+- **Real-Time Monitoring**: ✅ Yes (during update loop)
+- **Violation Reporting**: ✅ Yes (console output)
 
 #### Advanced Setup
 - **Voltage Violations**: ❌ No
@@ -277,10 +295,11 @@ auto consistency = consistencyChecker.checkConsistency(*telemetry, *network);
 ```
 
 #### Hybrid Setup
-- **Observability Check**: ❌ No
-- **Data Consistency**: ❌ No
-- **Pre-Validation**: ❌ No
-- **Approach**: Direct to estimation
+- **Observability Check**: ✅ Yes (before estimation)
+- **Data Consistency**: ✅ Yes (before estimation)
+- **Optimal Placement**: ✅ Yes (if not observable)
+- **Pre-Validation**: ✅ Yes (comprehensive)
+- **Approach**: Validate thoroughly before estimation
 
 #### Advanced Setup
 - **Observability Check**: ❌ No
@@ -288,7 +307,7 @@ auto consistency = consistencyChecker.checkConsistency(*telemetry, *network);
 - **Pre-Validation**: ❌ No
 - **Approach**: Direct to estimation
 
-**Winner**: Offline (most comprehensive validation)
+**Winner**: Offline and Hybrid (both have comprehensive validation)
 
 ---
 
@@ -310,7 +329,7 @@ auto consistency = consistencyChecker.checkConsistency(*telemetry, *network);
 - **JSON Results**: ❌ No
 - **Comparison Report**: ❌ No
 - **System Summary**: ❌ No
-- **Output**: Console only
+- **Output**: Console only (detailed computed values tables)
 
 #### Advanced Setup
 - **JSON Results**: ❌ No
@@ -340,7 +359,7 @@ auto consistency = consistencyChecker.checkConsistency(*telemetry, *network);
 
 #### Hybrid Setup
 - **Load Flow**: ❌ No
-- **Optimal Placement**: ❌ No
+- **Optimal Placement**: ✅ Yes (if observability issues detected)
 - **Transformer Config**: ❌ No
 - **PMU Support**: ❌ No
 - **Multi-Area**: ❌ No
@@ -387,11 +406,13 @@ auto multiResult = multiArea.estimateHierarchical();
 - **Access**: Via Bus/Branch getters
 
 #### Hybrid Setup
-- **Voltage Estimates**: ❌ No
-- **Power Injections**: ❌ No
-- **Power Flows**: ❌ No
-- **Current Values**: ❌ No
-- **Access**: N/A
+- **Voltage Estimates**: ✅ Yes (from robust estimation)
+- **Power Injections**: ✅ Yes (from robust estimation)
+- **Power Flows**: ✅ Yes (from robust estimation)
+- **Current Values**: ✅ Yes (from robust estimation)
+- **Access**: Via Bus/Branch getters
+- **Display**: Detailed tables showing all computed values
+- **Timing**: Computed during robust estimation cycles and at end
 
 #### Advanced Setup
 - **Voltage Estimates**: ✅ Yes (from robust estimation)
@@ -402,7 +423,7 @@ auto multiResult = multiArea.estimateHierarchical();
 - **Display**: Detailed tables showing all computed values
 - **Comparison**: WLS vs Robust results shown side-by-side
 
-**Winner**: Offline, Real-Time, and Advanced
+**Winner**: All four setups (all support computed values extraction)
 
 ---
 
@@ -461,6 +482,9 @@ auto multiResult = multiArea.estimateHierarchical();
 - ✅ Bad data detection alone **isn't sufficient** (need automatic correction)
 - ✅ You can tolerate **slightly slower performance** for better accuracy
 - ✅ You want a **multi-layered approach** (WLS + robust + detection)
+- ✅ You need **comprehensive pre-validation** (data consistency, observability)
+- ✅ You want **optimal measurement placement** recommendations
+- ✅ You need **computed values extraction** (voltage, power, current)
 
 **Example Use Cases:**
 - Systems with unreliable measurement devices
@@ -501,8 +525,10 @@ auto multiResult = multiArea.estimateHierarchical();
 | Planning/analysis studies | **Offline Setup** |
 | Production SCADA/EMS | **Real-Time Setup** |
 | Systems with bad data | **Hybrid Setup** |
-| Need monitoring/alerts | **Offline/Real-Time Setup** |
+| Need monitoring/alerts | **Offline/Real-Time/Hybrid Setup** |
 | Need comprehensive reports | **Offline/Real-Time Setup** |
+| Need pre-validation + real-time | **Hybrid Setup** |
+| Need optimal placement + real-time | **Hybrid Setup** |
 | Research/feature exploration | **Advanced Setup** |
 | High-frequency real-time updates | **Real-Time Setup** |
 | Automatic bad data handling | **Hybrid Setup** |
@@ -520,8 +546,8 @@ auto multiResult = multiArea.estimateHierarchical();
 
 **Offline Setup**: High accuracy analysis with comprehensive validation and reporting  
 **Real-Time Setup**: Production monitoring with real-time updates and comprehensive reporting  
-**Hybrid Setup**: Real-time operation with automatic bad data handling  
-**Advanced Setup**: Feature demonstration with all advanced capabilities
+**Hybrid Setup**: Real-time operation with automatic bad data handling, pre-validation, observability analysis, optimal placement, and computed values extraction  
+**Advanced Setup**: Feature demonstration with all advanced capabilities including robust estimation with value extraction and WLS comparison
 
 Choose based on your primary need:
 - **Accuracy & Analysis**: Offline
