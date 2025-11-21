@@ -236,12 +236,19 @@ void NetworkModel::buildAdmittanceMatrix(std::vector<Complex>& Y,
                                          std::vector<Index>& colInd) const {
     const size_t n = buses_.size();
     Y.clear();
-    rowPtr.clear();
     colInd.clear();
     
     Y.reserve(n * 4);  // Estimate: average 4 connections per bus
     colInd.reserve(n * 4);
-    rowPtr.resize(n + 1, 0);
+    
+    // Only resize rowPtr if size changed (avoid unnecessary reallocation)
+    if (rowPtr.size() != n + 1) {
+        rowPtr.clear();
+        rowPtr.resize(n + 1, 0);
+    } else {
+        // Zero-initialize existing vector (faster than resize)
+        std::fill(rowPtr.begin(), rowPtr.end(), 0);
+    }
     
     // Build structure
     colInd.reserve(n * 4);  // Estimate: average 4 connections
@@ -275,8 +282,13 @@ void NetworkModel::buildAdmittanceMatrix(std::vector<Complex>& Y,
         }
     }
     
-    // Fill values
-    Y.resize(colInd.size(), Complex(0.0, 0.0));
+    // Fill values - only resize if size changed
+    if (Y.size() != colInd.size()) {
+        Y.resize(colInd.size(), Complex(0.0, 0.0));
+    } else {
+        // Zero-initialize existing vector (faster than resize)
+        std::fill(Y.begin(), Y.end(), Complex(0.0, 0.0));
+    }
     
     for (size_t i = 0; i < n; ++i) {
         BusId busId = buses_[i]->getId();
@@ -397,10 +409,27 @@ void NetworkModel::updateAdjacencyLists() const {
     if (!adjacencyDirty_) return;
     
     size_t nBuses = buses_.size();
-    branchesFromBus_.clear();
-    branchesToBus_.clear();
-    branchesFromBus_.resize(nBuses);
-    branchesToBus_.resize(nBuses);
+    
+    // Only resize if size changed (avoid unnecessary reallocation)
+    if (branchesFromBus_.size() != nBuses) {
+        branchesFromBus_.clear();
+        branchesFromBus_.resize(nBuses);
+    } else {
+        // Clear existing entries but keep capacity
+        for (auto& vec : branchesFromBus_) {
+            vec.clear();
+        }
+    }
+    
+    if (branchesToBus_.size() != nBuses) {
+        branchesToBus_.clear();
+        branchesToBus_.resize(nBuses);
+    } else {
+        // Clear existing entries but keep capacity
+        for (auto& vec : branchesToBus_) {
+            vec.clear();
+        }
+    }
     
     for (size_t i = 0; i < branches_.size(); ++i) {
         const Branch* branch = branches_[i].get();
@@ -545,10 +574,22 @@ void NetworkModel::updateDeviceData() const {
     
     // Build CSR format adjacency lists for GPU
     // First, build row pointers from adjacency lists (efficient O(nBuses) operation)
-    cachedBranchFromBusRowPtr_.clear();
-    cachedBranchToBusRowPtr_.clear();
-    cachedBranchFromBusRowPtr_.resize(nBuses + 1, 0);
-    cachedBranchToBusRowPtr_.resize(nBuses + 1, 0);
+    // Only resize if size changed (avoid unnecessary reallocation)
+    if (cachedBranchFromBusRowPtr_.size() != nBuses + 1) {
+        cachedBranchFromBusRowPtr_.clear();
+        cachedBranchFromBusRowPtr_.resize(nBuses + 1, 0);
+    } else {
+        // Zero-initialize existing vector (faster than resize)
+        std::fill(cachedBranchFromBusRowPtr_.begin(), cachedBranchFromBusRowPtr_.end(), 0);
+    }
+    
+    if (cachedBranchToBusRowPtr_.size() != nBuses + 1) {
+        cachedBranchToBusRowPtr_.clear();
+        cachedBranchToBusRowPtr_.resize(nBuses + 1, 0);
+    } else {
+        // Zero-initialize existing vector (faster than resize)
+        std::fill(cachedBranchToBusRowPtr_.begin(), cachedBranchToBusRowPtr_.end(), 0);
+    }
     
     // Build row pointers for branchesFromBus (outgoing branches)
     Index fromOffset = 0;

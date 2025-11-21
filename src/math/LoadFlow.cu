@@ -180,7 +180,14 @@ void LoadFlow::buildPowerFlowJacobian(const NetworkModel& network, const StateVe
     size_t nBuses = network.getBusCount();
     size_t nStates = 2 * nBuses;
     
-    rowPtr.resize(nStates + 1, 0);
+    // Only resize rowPtr if size changed (avoid unnecessary reallocation)
+    if (rowPtr.size() != nStates + 1) {
+        rowPtr.clear();
+        rowPtr.resize(nStates + 1, 0);
+    } else {
+        // Zero-initialize existing vector (faster than resize)
+        std::fill(rowPtr.begin(), rowPtr.end(), 0);
+    }
     colInd.clear();
     J.clear();
     
