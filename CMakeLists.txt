@@ -152,7 +152,11 @@ install(DIRECTORY include/ DESTINATION include)
 # Tests
 if(BUILD_TESTS)
     enable_testing()
-    add_subdirectory(tests)
+    if(IS_DIRECTORY ${CMAKE_SOURCE_DIR}/tests AND EXISTS ${CMAKE_SOURCE_DIR}/tests/CMakeLists.txt)
+        add_subdirectory(tests)
+    else()
+        message(STATUS "Tests directory or CMakeLists.txt not found - skipping tests")
+    endif()
 endif()
 
 # Examples
