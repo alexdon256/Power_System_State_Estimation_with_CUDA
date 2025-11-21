@@ -5,13 +5,70 @@
  */
 
 #include <sle/model/NetworkModel.h>
+#include <sle/model/StateVector.h>
 #include <algorithm>
 #include <cmath>
+
+#ifdef USE_CUDA
+#include <sle/cuda/CudaPowerFlow.h>
+#include <sle/cuda/CudaMemoryManager.h>
+#include <cuda_runtime.h>
+#endif
+
+#ifdef USE_OPENMP
+#include <omp.h>
+#endif
 
 namespace sle {
 namespace model {
 
-NetworkModel::NetworkModel() : baseMVA_(100.0), referenceBus_(-1) {
+#ifdef USE_CUDA
+// GPU memory pool structure
+struct NetworkModel::CudaMemoryPool {
+    Real* d_v = nullptr;
+    Real* d_theta = nullptr;
+    sle::cuda::DeviceBus* d_buses = nullptr;
+    sle::cuda::DeviceBranch* d_branches = nullptr;
+    Index* d_branchFromBus = nullptr;
+    Index* d_branchToBus = nullptr;
+    Real* d_pInjection = nullptr;
+    Real* d_qInjection = nullptr;
+    Real* d_pFlow = nullptr;
+    Real* d_qFlow = nullptr;
+    
+    size_t vSize = 0;
+    size_t thetaSize = 0;
+    size_t busesSize = 0;
+    size_t branchesSize = 0;
+    size_t branchFromBusSize = 0;
+    size_t branchToBusSize = 0;
+    size_t pInjectionSize = 0;
+    size_t qInjectionSize = 0;
+    size_t pFlowSize = 0;
+    size_t qFlowSize = 0;
+    
+    ~CudaMemoryPool() {
+        if (d_v) cudaFree(d_v);
+        if (d_theta) cudaFree(d_theta);
+        if (d_buses) cudaFree(d_buses);
+        if (d_branches) cudaFree(d_branches);
+        if (d_branchFromBus) cudaFree(d_branchFromBus);
+        if (d_branchToBus) cudaFree(d_branchToBus);
+        if (d_pInjection) cudaFree(d_pInjection);
+        if (d_qInjection) cudaFree(d_qInjection);
+        if (d_pFlow) cudaFree(d_pFlow);
+        if (d_qFlow) cudaFree(d_qFlow);
+    }
+};
+#endif
+
+NetworkModel::NetworkModel() 
+    : baseMVA_(100.0), referenceBus_(-1)
+#ifdef USE_CUDA
+    , gpuMemoryPool_(std::make_unique<CudaMemoryPool>())
+    , deviceDataDirty_(true)
+#endif
+    , adjacencyDirty_(true) {
 }
 
 NetworkModel::~NetworkModel() = default;
@@ -26,6 +83,7 @@ Bus* NetworkModel::addBus(BusId id, const std::string& name) {
     Bus* busPtr = bus.get();
     busIndexMap_[id] = buses_.size();
     buses_.push_back(std::move(bus));
+    invalidateCaches();
     return busPtr;
 }
 
@@ -73,6 +131,7 @@ Branch* NetworkModel::addBranch(BranchId id, BusId fromBus, BusId toBus) {
     Branch* branchPtr = branch.get();
     branchIndexMap_[id] = branches_.size();
     branches_.push_back(std::move(branch));
+    invalidateCaches();
     return branchPtr;
 }
 
@@ -111,20 +170,34 @@ std::vector<const Branch*> NetworkModel::getBranches() const {
 }
 
 std::vector<Branch*> NetworkModel::getBranchesFromBus(BusId busId) {
+    updateAdjacencyLists();
+    Index busIdx = getBusIndex(busId);
+    if (busIdx < 0 || static_cast<size_t>(busIdx) >= branchesFromBus_.size()) {
+        return {};
+    }
+    
     std::vector<Branch*> result;
-    for (auto& branch : branches_) {
-        if (branch->getFromBus() == busId) {
-            result.push_back(branch.get());
+    result.reserve(branchesFromBus_[busIdx].size());
+    for (Index brIdx : branchesFromBus_[busIdx]) {
+        if (static_cast<size_t>(brIdx) < branches_.size()) {
+            result.push_back(branches_[brIdx].get());
         }
     }
     return result;
 }
 
 std::vector<Branch*> NetworkModel::getBranchesToBus(BusId busId) {
+    updateAdjacencyLists();
+    Index busIdx = getBusIndex(busId);
+    if (busIdx < 0 || static_cast<size_t>(busIdx) >= branchesToBus_.size()) {
+        return {};
+    }
+    
     std::vector<Branch*> result;
-    for (auto& branch : branches_) {
-        if (branch->getToBus() == busId) {
-            result.push_back(branch.get());
+    result.reserve(branchesToBus_[busIdx].size());
+    for (Index brIdx : branchesToBus_[busIdx]) {
+        if (static_cast<size_t>(brIdx) < branches_.size()) {
+            result.push_back(branches_[brIdx].get());
         }
     }
     return result;
@@ -261,6 +334,7 @@ void NetworkModel::removeBus(BusId id) {
         for (size_t i = 0; i < buses_.size(); ++i) {
             busIndexMap_[buses_[i]->getId()] = i;
         }
+        invalidateCaches();
     }
 }
 
@@ -276,12 +350,14 @@ void NetworkModel::removeBranch(BranchId id) {
         for (size_t i = 0; i < branches_.size(); ++i) {
             branchIndexMap_[branches_[i]->getId()] = i;
         }
+        invalidateCaches();
     }
 }
 
 void NetworkModel::invalidateAdmittanceMatrix() {
     // Mark that admittance matrix needs to be rebuilt
     // This would be used by solvers to know when to recompute
+    invalidateCaches();
 }
 
 void NetworkModel::clear() {
@@ -290,6 +366,382 @@ void NetworkModel::clear() {
     busIndexMap_.clear();
     branchIndexMap_.clear();
     referenceBus_ = -1;
+    invalidateCaches();
+}
+
+void NetworkModel::invalidateCaches() {
+    deviceDataDirty_ = true;
+    adjacencyDirty_ = true;
+}
+
+void NetworkModel::updateAdjacencyLists() const {
+    if (!adjacencyDirty_) return;
+    
+    size_t nBuses = buses_.size();
+    branchesFromBus_.clear();
+    branchesToBus_.clear();
+    branchesFromBus_.resize(nBuses);
+    branchesToBus_.resize(nBuses);
+    
+    for (size_t i = 0; i < branches_.size(); ++i) {
+        const Branch* branch = branches_[i].get();
+        Index fromIdx = getBusIndex(branch->getFromBus());
+        Index toIdx = getBusIndex(branch->getToBus());
+        
+        if (fromIdx >= 0 && static_cast<size_t>(fromIdx) < nBuses) {
+            branchesFromBus_[fromIdx].push_back(static_cast<Index>(i));
+        }
+        if (toIdx >= 0 && static_cast<size_t>(toIdx) < nBuses) {
+            branchesToBus_[toIdx].push_back(static_cast<Index>(i));
+        }
+    }
+    
+    adjacencyDirty_ = false;
+}
+
+#ifdef USE_CUDA
+void NetworkModel::ensureGPUCapacity(size_t nBuses, size_t nBranches) const {
+    if (!gpuMemoryPool_) return;
+    
+    auto& pool = *gpuMemoryPool_;
+    cudaError_t err;
+    
+    if (pool.vSize < nBuses) {
+        if (pool.d_v) cudaFree(pool.d_v);
+        err = cudaMalloc(&pool.d_v, nBuses * sizeof(Real));
+        pool.vSize = (err == cudaSuccess) ? nBuses : 0;
+    }
+    if (pool.thetaSize < nBuses) {
+        if (pool.d_theta) cudaFree(pool.d_theta);
+        err = cudaMalloc(&pool.d_theta, nBuses * sizeof(Real));
+        pool.thetaSize = (err == cudaSuccess) ? nBuses : 0;
+    }
+    if (pool.busesSize < nBuses) {
+        if (pool.d_buses) cudaFree(pool.d_buses);
+        err = cudaMalloc(&pool.d_buses, nBuses * sizeof(sle::cuda::DeviceBus));
+        pool.busesSize = (err == cudaSuccess) ? nBuses : 0;
+    }
+    if (pool.branchesSize < nBranches) {
+        if (pool.d_branches) cudaFree(pool.d_branches);
+        err = cudaMalloc(&pool.d_branches, nBranches * sizeof(sle::cuda::DeviceBranch));
+        pool.branchesSize = (err == cudaSuccess) ? nBranches : 0;
+    }
+    if (pool.branchFromBusSize < nBranches) {
+        if (pool.d_branchFromBus) cudaFree(pool.d_branchFromBus);
+        err = cudaMalloc(&pool.d_branchFromBus, nBranches * sizeof(Index));
+        pool.branchFromBusSize = (err == cudaSuccess) ? nBranches : 0;
+    }
+    if (pool.branchToBusSize < nBranches) {
+        if (pool.d_branchToBus) cudaFree(pool.d_branchToBus);
+        err = cudaMalloc(&pool.d_branchToBus, nBranches * sizeof(Index));
+        pool.branchToBusSize = (err == cudaSuccess) ? nBranches : 0;
+    }
+    if (pool.pInjectionSize < nBuses) {
+        if (pool.d_pInjection) cudaFree(pool.d_pInjection);
+        err = cudaMalloc(&pool.d_pInjection, nBuses * sizeof(Real));
+        pool.pInjectionSize = (err == cudaSuccess) ? nBuses : 0;
+    }
+    if (pool.qInjectionSize < nBuses) {
+        if (pool.d_qInjection) cudaFree(pool.d_qInjection);
+        err = cudaMalloc(&pool.d_qInjection, nBuses * sizeof(Real));
+        pool.qInjectionSize = (err == cudaSuccess) ? nBuses : 0;
+    }
+    if (pool.pFlowSize < nBranches) {
+        if (pool.d_pFlow) cudaFree(pool.d_pFlow);
+        err = cudaMalloc(&pool.d_pFlow, nBranches * sizeof(Real));
+        pool.pFlowSize = (err == cudaSuccess) ? nBranches : 0;
+    }
+    if (pool.qFlowSize < nBranches) {
+        if (pool.d_qFlow) cudaFree(pool.d_qFlow);
+        err = cudaMalloc(&pool.d_qFlow, nBranches * sizeof(Real));
+        pool.qFlowSize = (err == cudaSuccess) ? nBranches : 0;
+    }
+}
+
+void NetworkModel::updateDeviceData() const {
+    if (!deviceDataDirty_) return;
+    
+    size_t nBuses = buses_.size();
+    size_t nBranches = branches_.size();
+    
+    cachedDeviceBuses_.clear();
+    cachedDeviceBuses_.reserve(nBuses);
+    for (const auto& bus : buses_) {
+        sle::cuda::DeviceBus db;
+        db.baseKV = bus->getBaseKV();
+        db.gShunt = bus->getGShunt();
+        db.bShunt = bus->getBShunt();
+        cachedDeviceBuses_.push_back(db);
+    }
+    
+    cachedDeviceBranches_.clear();
+    cachedBranchFromBus_.clear();
+    cachedBranchToBus_.clear();
+    cachedDeviceBranches_.reserve(nBranches);
+    cachedBranchFromBus_.reserve(nBranches);
+    cachedBranchToBus_.reserve(nBranches);
+    
+    for (const auto& branch : branches_) {
+        sle::cuda::DeviceBranch db;
+        db.fromBus = getBusIndex(branch->getFromBus());
+        db.toBus = getBusIndex(branch->getToBus());
+        db.r = branch->getR();
+        db.x = branch->getX();
+        db.b = branch->getB();
+        db.tapRatio = branch->getTapRatio();
+        db.phaseShift = branch->getPhaseShift();
+        cachedDeviceBranches_.push_back(db);
+        cachedBranchFromBus_.push_back(db.fromBus);
+        cachedBranchToBus_.push_back(db.toBus);
+    }
+    
+    deviceDataDirty_ = false;
+}
+#endif
+
+void NetworkModel::computeVoltEstimates(const StateVector& state, bool useGPU) {
+    size_t nBuses = buses_.size();
+    const Real PI = 3.14159265359;
+    const Real RAD_TO_DEG = 180.0 / PI;
+    
+    // Optimized CPU path with vectorization hints
+    #ifdef USE_OPENMP
+    #pragma omp parallel for schedule(static)
+    #endif
+    for (size_t i = 0; i < nBuses; ++i) {
+        Bus* bus = buses_[i].get();
+        Real vPU = state.getVoltageMagnitude(static_cast<Index>(i));
+        Real thetaRad = state.getVoltageAngle(static_cast<Index>(i));
+        Real vKV = vPU * bus->getBaseKV();
+        Real thetaDeg = thetaRad * RAD_TO_DEG;
+        
+        bus->setVoltEstimates(vPU, vKV, thetaRad, thetaDeg);
+    }
+}
+
+void NetworkModel::computePowerInjections(const StateVector& state, bool useGPU) {
+    size_t nBuses = buses_.size();
+    std::vector<Real> pInjection, qInjection;
+    
+    // Compute power injections (using existing method)
+    computePowerInjections(state, pInjection, qInjection, useGPU);
+    
+    // Store in Bus objects
+    Real baseMVA = getBaseMVA();
+    for (size_t i = 0; i < nBuses && i < pInjection.size(); ++i) {
+        Bus* bus = buses_[i].get();
+        Real pMW = pInjection[i] * baseMVA;
+        Real qMVAR = qInjection[i] * baseMVA;
+        bus->setPowerInjections(pInjection[i], qInjection[i], pMW, qMVAR);
+    }
+}
+
+void NetworkModel::computePowerFlows(const StateVector& state, bool useGPU) {
+    size_t nBranches = branches_.size();
+    std::vector<Real> pFlow, qFlow;
+    
+    // Compute power flows (using existing method)
+    computePowerFlows(state, pFlow, qFlow, useGPU);
+    
+    // Store in Branch objects
+    Real baseMVA = getBaseMVA();
+    auto voltages = state.getMagnitudes();
+    
+    for (size_t i = 0; i < nBranches && i < pFlow.size(); ++i) {
+        Branch* branch = branches_[i].get();
+        Index fromIdx = getBusIndex(branch->getFromBus());
+        
+        if (fromIdx >= 0 && static_cast<size_t>(fromIdx) < voltages.size()) {
+            Real vFrom = voltages[fromIdx];
+            Real p = pFlow[i];
+            Real q = qFlow[i];
+            Real pMW = p * baseMVA;
+            Real qMVAR = q * baseMVA;
+            
+            // Compute current
+            Real iPU = branch->computeCurrentMagnitude(p, q, vFrom);
+            
+            // Convert to Amperes
+            Bus* fromBus = getBus(branch->getFromBus());
+            Real baseKV = fromBus ? fromBus->getBaseKV() : 100.0;
+            Real baseCurrent = (baseMVA * 1000.0) / (std::sqrt(3.0) * baseKV);
+            Real iAmps = iPU * baseCurrent;
+            
+            branch->setPowerFlow(p, q, pMW, qMVAR, iAmps, iPU);
+        }
+    }
+}
+
+void NetworkModel::computePowerInjections(const StateVector& state,
+                                          std::vector<Real>& pInjection, 
+                                          std::vector<Real>& qInjection,
+                                          bool useGPU) const {
+    size_t nBuses = buses_.size();
+    size_t nBranches = branches_.size();
+    pInjection.assign(nBuses, 0.0);
+    qInjection.assign(nBuses, 0.0);
+    
+#ifdef USE_CUDA
+    if (useGPU && gpuMemoryPool_) {
+        try {
+            // Ensure GPU memory pool has capacity
+            ensureGPUCapacity(nBuses, nBranches);
+            auto& pool = *gpuMemoryPool_;
+            
+            // Check if allocations succeeded
+            if (!pool.d_v || !pool.d_theta || !pool.d_buses || !pool.d_branches ||
+                !pool.d_branchFromBus || !pool.d_branchToBus ||
+                !pool.d_pInjection || !pool.d_qInjection) {
+                useGPU = false;  // Fall back to CPU
+            } else {
+                // Update cached device data if needed
+                updateDeviceData();
+                
+                // Get state vectors
+                std::vector<Real> v = state.getMagnitudes();
+                std::vector<Real> theta = state.getAngles();
+                
+                // Copy to device (reuse existing allocations)
+                cudaMemcpy(pool.d_v, v.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
+                cudaMemcpy(pool.d_theta, theta.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
+                cudaMemcpy(pool.d_buses, cachedDeviceBuses_.data(), 
+                          nBuses * sizeof(sle::cuda::DeviceBus), cudaMemcpyHostToDevice);
+                cudaMemcpy(pool.d_branches, cachedDeviceBranches_.data(), 
+                          nBranches * sizeof(sle::cuda::DeviceBranch), cudaMemcpyHostToDevice);
+                cudaMemcpy(pool.d_branchFromBus, cachedBranchFromBus_.data(), 
+                          nBranches * sizeof(Index), cudaMemcpyHostToDevice);
+                cudaMemcpy(pool.d_branchToBus, cachedBranchToBus_.data(), 
+                          nBranches * sizeof(Index), cudaMemcpyHostToDevice);
+                
+                // Launch GPU kernel
+                sle::cuda::computeAllPowerInjectionsGPU(
+                    pool.d_v, pool.d_theta, pool.d_buses, pool.d_branches,
+                    pool.d_branchFromBus, pool.d_branchToBus,
+                    pool.d_pInjection, pool.d_qInjection,
+                    static_cast<Index>(nBuses), static_cast<Index>(nBranches));
+                
+                // Copy back (async could be used here for better performance)
+                cudaMemcpy(pInjection.data(), pool.d_pInjection, 
+                          nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
+                cudaMemcpy(qInjection.data(), pool.d_qInjection, 
+                          nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
+                
+                return;  // Success, return early
+            }
+        } catch (...) {
+            // Fall back to CPU if GPU fails
+            useGPU = false;
+        }
+    }
+#endif
+    
+    // CPU fallback - optimized with adjacency lists and vectorization
+    updateAdjacencyLists();
+    
+    #ifdef USE_OPENMP
+    #pragma omp parallel for schedule(static)
+    #endif
+    for (size_t i = 0; i < nBuses; ++i) {
+        const Bus* bus = buses_[i].get();
+        Real v = state.getVoltageMagnitude(static_cast<Index>(i));
+        Real v2 = v * v;  // Reuse v^2 computation
+        Real theta = state.getVoltageAngle(static_cast<Index>(i));
+        
+        // Shunt contribution
+        pInjection[i] = v2 * bus->getGShunt();
+        qInjection[i] = -v2 * bus->getBShunt();
+        
+        // Branch contributions (outgoing) - use cached adjacency list
+        for (Index brIdx : branchesFromBus_[i]) {
+            const Branch* branch = branches_[brIdx].get();
+            Index toIdx = getBusIndex(branch->getToBus());
+            if (toIdx >= 0) {
+                Real pFlow, qFlow;
+                branch->computePowerFlow(state, static_cast<Index>(i), toIdx, pFlow, qFlow);
+                pInjection[i] += pFlow;
+                qInjection[i] += qFlow;
+            }
+        }
+        
+        // Branch contributions (incoming - reverse direction)
+        for (Index brIdx : branchesToBus_[i]) {
+            const Branch* branch = branches_[brIdx].get();
+            Index fromIdx = getBusIndex(branch->getFromBus());
+            if (fromIdx >= 0) {
+                Real pFlow, qFlow;
+                branch->computePowerFlow(state, fromIdx, static_cast<Index>(i), pFlow, qFlow);
+                pInjection[i] -= pFlow;  // Reverse direction
+                qInjection[i] -= qFlow;
+            }
+        }
+    }
+}
+
+void NetworkModel::computePowerFlows(const StateVector& state,
+                                     std::vector<Real>& pFlow, 
+                                     std::vector<Real>& qFlow,
+                                     bool useGPU) const {
+    size_t nBranches = branches_.size();
+    pFlow.assign(nBranches, 0.0);
+    qFlow.assign(nBranches, 0.0);
+    
+#ifdef USE_CUDA
+    if (useGPU && gpuMemoryPool_) {
+        try {
+            size_t nBuses = buses_.size();
+            ensureGPUCapacity(nBuses, nBranches);
+            auto& pool = *gpuMemoryPool_;
+            
+            if (!pool.d_v || !pool.d_theta || !pool.d_branches || 
+                !pool.d_pFlow || !pool.d_qFlow) {
+                useGPU = false;
+            } else {
+                // Update cached device data if needed
+                updateDeviceData();
+                
+                // Get state vectors
+                std::vector<Real> v = state.getMagnitudes();
+                std::vector<Real> theta = state.getAngles();
+                
+                // Copy to device (reuse existing allocations)
+                cudaMemcpy(pool.d_v, v.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
+                cudaMemcpy(pool.d_theta, theta.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
+                cudaMemcpy(pool.d_branches, cachedDeviceBranches_.data(), 
+                          nBranches * sizeof(sle::cuda::DeviceBranch), cudaMemcpyHostToDevice);
+                
+                // Launch GPU kernel
+                sle::cuda::computeAllPowerFlowsGPU(
+                    pool.d_v, pool.d_theta, pool.d_branches,
+                    pool.d_pFlow, pool.d_qFlow,
+                    static_cast<Index>(nBranches), static_cast<Index>(nBuses));
+                
+                // Copy back
+                cudaMemcpy(pFlow.data(), pool.d_pFlow, 
+                          nBranches * sizeof(Real), cudaMemcpyDeviceToHost);
+                cudaMemcpy(qFlow.data(), pool.d_qFlow, 
+                          nBranches * sizeof(Real), cudaMemcpyDeviceToHost);
+                
+                return;  // Success, return early
+            }
+        } catch (...) {
+            useGPU = false;
+        }
+    }
+#endif
+    
+    // CPU fallback - optimized with vectorization
+    #ifdef USE_OPENMP
+    #pragma omp parallel for schedule(static)
+    #endif
+    for (size_t i = 0; i < nBranches; ++i) {
+        const Branch* branch = branches_[i].get();
+        Index fromIdx = getBusIndex(branch->getFromBus());
+        Index toIdx = getBusIndex(branch->getToBus());
+        
+        if (fromIdx >= 0 && toIdx >= 0) {
+            branch->computePowerFlow(state, fromIdx, toIdx, pFlow[i], qFlow[i]);
+        }
+    }
 }
 
 } // namespace model

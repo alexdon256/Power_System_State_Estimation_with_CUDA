@@ -13,7 +13,7 @@ Complete guide to all documentation in the State Estimation project.
 
 - **[REALTIME.md](REALTIME.md)** - Real-time operation guide
 - **[MODEL_FORMAT.md](MODEL_FORMAT.md)** - Model format specifications (IEEE, JSON, CSV, SCADA, PMU)
-- **[FEATURES.md](FEATURES.md)** - Complete feature list and implementation status
+- **[FEATURES.md](FEATURES.md)** - Complete feature list, production requirements, and implementation status
 
 ## Performance & Optimization
 
@@ -28,6 +28,7 @@ Complete guide to all documentation in the State Estimation project.
 ## Comparison & Assessment
 
 - **[ETAP_COMPARISON.md](ETAP_COMPARISON.md)** - Comparison with ETAP State Load Estimation
+- **[EXAMPLES_COMPARISON.md](EXAMPLES_COMPARISON.md)** - Comparison of all setup examples (offline, real-time, hybrid, advanced)
 
 ## Quick Reference
 

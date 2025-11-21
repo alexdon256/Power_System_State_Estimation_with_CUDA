@@ -48,7 +48,23 @@ public:
     
     bool isZeroInjection() const;
     
+    // Getters for computed voltage estimates (set by computeVoltEstimates)
+    Real getVPU() const { return vPU_; }              // Voltage in per-unit
+    Real getVKV() const { return vKV_; }              // Voltage in kV
+    Real getThetaRad() const { return thetaRad_; }     // Angle in radians
+    Real getThetaDeg() const { return thetaDeg_; }     // Angle in degrees
+    
+    // Getters for computed power injections (set by computePowerInjections)
+    Real getPInjection() const { return pInjection_; }        // P injection in p.u.
+    Real getQInjection() const { return qInjection_; }        // Q injection in p.u.
+    Real getPInjectionMW() const { return pInjectionMW_; }    // P injection in MW
+    Real getQInjectionMVAR() const { return qInjectionMVAR_; } // Q injection in MVAR
+    
 private:
+    // Internal setters (used by NetworkModel)
+    friend class NetworkModel;
+    void setVoltEstimates(Real vPU, Real vKV, Real thetaRad, Real thetaDeg);
+    void setPowerInjections(Real pInj, Real qInj, Real pMW, Real qMVAR);
     BusId id_;
     std::string name_;
     BusType type_;
@@ -67,6 +83,17 @@ private:
     
     Real vMin_;
     Real vMax_;
+    
+    // Computed values (set by NetworkModel compute methods)
+    Real vPU_;              // Voltage in per-unit (from state estimation)
+    Real vKV_;              // Voltage in kV
+    Real thetaRad_;         // Angle in radians
+    Real thetaDeg_;         // Angle in degrees
+    
+    Real pInjection_;       // P injection in p.u.
+    Real qInjection_;       // Q injection in p.u.
+    Real pInjectionMW_;     // P injection in MW
+    Real qInjectionMVAR_;   // Q injection in MVAR
 };
 
 } // namespace model

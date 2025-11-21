@@ -394,6 +394,95 @@ void evaluateMeasurements(const Real* v, const Real* theta,
     // This allows overlapping with other operations
 }
 
+// GPU-accelerated power flow computation for all branches
+__global__ void computeAllPowerFlowsKernel(const Real* v, const Real* theta,
+                                           const DeviceBranch* branches,
+                                           Real* pFlow, Real* qFlow,
+                                           Index nBranches, Index nBuses) {
+    Index idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (idx < nBranches) {
+        const DeviceBranch& br = branches[idx];
+        
+        // Use existing optimized power flow functions
+        Real p = computePowerFlowP(v, theta, branches, idx, br.fromBus, br.toBus, nBuses);
+        Real q = computePowerFlowQ(v, theta, branches, idx, br.fromBus, br.toBus, nBuses);
+        
+        pFlow[idx] = p;
+        qFlow[idx] = q;
+    }
+}
+
+// GPU-accelerated power injection computation for all buses
+__global__ void computeAllPowerInjectionsKernel(const Real* v, const Real* theta,
+                                                const DeviceBus* buses,
+                                                const DeviceBranch* branches,
+                                                const Index* branchFromBus,
+                                                const Index* branchToBus,
+                                                Real* pInjection, Real* qInjection,
+                                                Index nBuses, Index nBranches) {
+    Index busIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (busIdx < nBuses) {
+        const DeviceBus& bus = buses[busIdx];
+        Real v_i = v[busIdx];
+        Real theta_i = theta[busIdx];
+        
+        // Shunt contribution
+        Real p = CUDA_FMA(v_i, v_i, 0.0) * bus.gShunt;  // v^2 * g
+        Real q = -CUDA_FMA(v_i, v_i, 0.0) * bus.bShunt;  // -v^2 * b
+        
+        // Branch contributions
+        for (Index brIdx = 0; brIdx < nBranches; ++brIdx) {
+            const DeviceBranch& br = branches[brIdx];
+            
+            if (br.fromBus == busIdx) {
+                // Outgoing branch
+                Real pFlow = computePowerFlowP(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses);
+                Real qFlow = computePowerFlowQ(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses);
+                p = CUDA_FMA(p, 1.0, pFlow);  // p += pFlow
+                q = CUDA_FMA(q, 1.0, qFlow);  // q += qFlow
+            } else if (br.toBus == busIdx) {
+                // Incoming branch (reverse direction)
+                Real pFlow = computePowerFlowP(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses);
+                Real qFlow = computePowerFlowQ(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses);
+                p = CUDA_FMA(p, 1.0, -pFlow);  // p -= pFlow
+                q = CUDA_FMA(q, 1.0, -qFlow);  // q -= qFlow
+            }
+        }
+        
+        pInjection[busIdx] = p;
+        qInjection[busIdx] = q;
+    }
+}
+
+// Wrapper functions
+void computeAllPowerFlowsGPU(const Real* v, const Real* theta,
+                            const DeviceBranch* branches,
+                            Real* pFlow, Real* qFlow,
+                            Index nBranches, Index nBuses) {
+    constexpr Index blockSize = 256;
+    const Index gridSize = (nBranches + blockSize - 1) / blockSize;
+    
+    computeAllPowerFlowsKernel<<<gridSize, blockSize>>>(
+        v, theta, branches, pFlow, qFlow, nBranches, nBuses);
+}
+
+void computeAllPowerInjectionsGPU(const Real* v, const Real* theta,
+                                 const DeviceBus* buses,
+                                 const DeviceBranch* branches,
+                                 const Index* branchFromBus,
+                                 const Index* branchToBus,
+                                 Real* pInjection, Real* qInjection,
+                                 Index nBuses, Index nBranches) {
+    constexpr Index blockSize = 256;
+    const Index gridSize = (nBuses + blockSize - 1) / blockSize;
+    
+    computeAllPowerInjectionsKernel<<<gridSize, blockSize>>>(
+        v, theta, buses, branches, branchFromBus, branchToBus,
+        pInjection, qInjection, nBuses, nBranches);
+}
+
 } // namespace cuda
 } // namespace sle
 

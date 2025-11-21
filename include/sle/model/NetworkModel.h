@@ -14,6 +14,10 @@
 #include <unordered_map>
 #include <memory>
 
+#ifdef USE_CUDA
+#include <sle/cuda/CudaPowerFlow.h>
+#endif
+
 namespace sle {
 namespace model {
 
@@ -67,7 +71,59 @@ public:
     Index getBusIndex(BusId id) const;
     Index getBranchIndex(BranchId id) const;
     
+    // Compute and store voltage estimates in buses
+    // Computes vPU, vKV, thetaRad, thetaDeg for all buses and stores in Bus objects
+    // useGPU: if true, uses GPU acceleration (requires CUDA)
+    void computeVoltEstimates(const StateVector& state, bool useGPU = false);
+    
+    // Compute and store power injections in buses
+    // Computes P, Q, MW, MVAR injections for all buses and stores in Bus objects
+    // useGPU: if true, uses GPU acceleration (requires CUDA)
+    void computePowerInjections(const StateVector& state, bool useGPU = false);
+    
+    // Compute and store power flows in branches
+    // Computes P, Q, MW, MVAR, I (amps and p.u.) for all branches and stores in Branch objects
+    // useGPU: if true, uses GPU acceleration (requires CUDA)
+    void computePowerFlows(const StateVector& state, bool useGPU = false);
+    
+    // Legacy methods (for backward compatibility) - return vectors instead of storing
+    void computePowerInjections(const StateVector& state,
+                               std::vector<Real>& pInjection, std::vector<Real>& qInjection,
+                               bool useGPU = false) const;
+    
+    void computePowerFlows(const StateVector& state,
+                          std::vector<Real>& pFlow, std::vector<Real>& qFlow,
+                          bool useGPU = false) const;
+    
 private:
+#ifdef USE_CUDA
+    // GPU memory pool for performance (reuse allocations)
+    struct CudaMemoryPool;
+    mutable std::unique_ptr<CudaMemoryPool> gpuMemoryPool_;
+#endif
+    
+#ifdef USE_CUDA
+    // Cached device data structures (updated incrementally)
+    mutable std::vector<sle::cuda::DeviceBus> cachedDeviceBuses_;
+    mutable std::vector<sle::cuda::DeviceBranch> cachedDeviceBranches_;
+    mutable std::vector<Index> cachedBranchFromBus_;
+    mutable std::vector<Index> cachedBranchToBus_;
+    mutable bool deviceDataDirty_;
+#endif
+    
+    // Adjacency lists for O(1) branch queries (updated on changes)
+    mutable std::vector<std::vector<Index>> branchesFromBus_;  // branchesFromBus_[busIdx] = branch indices
+    mutable std::vector<std::vector<Index>> branchesToBus_;    // branchesToBus_[busIdx] = branch indices
+    mutable bool adjacencyDirty_;
+    
+    // Helper methods
+#ifdef USE_CUDA
+    void ensureGPUCapacity(size_t nBuses, size_t nBranches) const;
+    void updateDeviceData() const;
+#endif
+    void updateAdjacencyLists() const;
+    void invalidateCaches();
+    
     std::vector<std::unique_ptr<Bus>> buses_;
     std::vector<std::unique_ptr<Branch>> branches_;
     std::unordered_map<BusId, Index> busIndexMap_;
