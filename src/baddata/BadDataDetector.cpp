@@ -127,6 +127,8 @@ BadDataResult BadDataDetector::detectBadData(
 
 void BadDataDetector::removeBadMeasurements(model::TelemetryData& telemetry,
                                            const BadDataResult& result) {
+    (void)telemetry;  // May be used in future implementation
+    (void)result;  // May be used in future implementation
     // Mark bad measurements as invalid
     // Note: TelemetryData would need to support removal/status update
     // For now, this is a placeholder

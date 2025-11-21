@@ -94,9 +94,13 @@ bool PMUParser::parseDataFrame(const uint8_t* buffer, size_t length, PMUFrame& f
             offset += 4;
             
             // Use memcpy to avoid strict aliasing violation
-            Real real, imag;
-            std::memcpy(&real, &realInt, sizeof(Real));
-            std::memcpy(&imag, &imagInt, sizeof(Real));
+            // realInt and imagInt are uint32_t (4 bytes) representing IEEE 754 float
+            // Convert to float first, then to Real (double)
+            float realFloat, imagFloat;
+            std::memcpy(&realFloat, &realInt, sizeof(uint32_t));
+            std::memcpy(&imagFloat, &imagInt, sizeof(uint32_t));
+            Real real = static_cast<Real>(realFloat);
+            Real imag = static_cast<Real>(imagFloat);
             
             frame.phasors.push_back(Complex(real, imag));
         }

@@ -132,6 +132,7 @@ Real OptimalPlacement::computeObservabilityGain(
     const std::set<BusId>& currentMeasurements,
     BusId candidateBus,
     MeasurementType type) {
+    (void)type;  // May be used in future implementation
     
     // Compute how many additional buses become observable
     std::set<BusId> testMeasurements = currentMeasurements;

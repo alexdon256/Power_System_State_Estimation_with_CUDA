@@ -8,7 +8,6 @@
 #include <sle/model/NetworkModel.h>
 #include <sle/model/StateVector.h>
 #include <sle/model/TelemetryData.h>
-#include <sle/cuda/CudaMeasurementKernels.cu>
 #include <sle/cuda/CudaMemoryManager.h>
 #include <sle/Types.h>
 #include <cuda_runtime.h>
