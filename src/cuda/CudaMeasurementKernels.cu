@@ -16,26 +16,20 @@
 //       __CUDA_ARCH__ is only defined in device code (__device__/__global__ functions)
 //       For IDE parsing, neither may be defined, so we fall back to regular operations
 #if defined(__CUDA_ARCH__)
-    // Device code: __CUDA_ARCH__ is defined
-#if __CUDA_ARCH__ >= 600
-    #define CUDA_FMA(a, b, c) __fma_rn((a), (b), (c))
-    #define CUDA_SINCOS(x, s, c) __dsincos((x), (s), (c))
+    #if __CUDA_ARCH__ >= 600
+        #define CUDA_FMA(a, b, c) __fma_rn((a), (b), (c))
+    #else
+        #define CUDA_FMA(a, b, c) ((a) * (b) + (c))
+    #endif
+    #define CUDA_SINCOS(x, s, c) sincos((x), (s), (c))
     #define CUDA_DIV(a, b) ((a) / (b))
-#else
-    #define CUDA_FMA(a, b, c) ((a) * (b) + (c))
-    #define CUDA_SINCOS(x, s, c) do { *(s) = sin(x); *(c) = cos(x); } while(0)
-    #define CUDA_DIV(a, b) ((a) / (b))
-#endif
 #elif defined(__CUDACC__)
-    // Host code in .cu file: __CUDACC__ defined but __CUDA_ARCH__ not defined
-    // Use regular operations (host code doesn't need intrinsics)
     #define CUDA_FMA(a, b, c) ((a) * (b) + (c))
-    #define CUDA_SINCOS(x, s, c) do { *(s) = sin(x); *(c) = cos(x); } while(0)
+    #define CUDA_SINCOS(x, s, c) sincos((x), (s), (c))
     #define CUDA_DIV(a, b) ((a) / (b))
 #else
-    // IDE parsing or regular C++ compiler: use regular operations
     #define CUDA_FMA(a, b, c) ((a) * (b) + (c))
-    #define CUDA_SINCOS(x, s, c) do { *(s) = sin(x); *(c) = cos(x); } while(0)
+    #define CUDA_SINCOS(x, s, c) sincos((x), (s), (c))
     #define CUDA_DIV(a, b) ((a) / (b))
 #endif
 
