@@ -44,11 +44,11 @@ std::unique_ptr<model::NetworkModel> ModelLoader::load(const std::string& filepa
 }
 
 std::unique_ptr<model::NetworkModel> ModelLoader::parseIEEE(const std::string& filepath) {
-    return IEEEFormatParser::parse(filepath);
+    return sle::io::IEEEFormatParser::parse(filepath);
 }
 
 std::unique_ptr<model::NetworkModel> ModelLoader::parseJSON(const std::string& filepath) {
-    return JSONParser::parseNetwork(filepath);
+    return sle::io::JSONParser::parseNetwork(filepath);
 }
 
 std::unique_ptr<model::NetworkModel> ModelLoader::parseMATPOWER(const std::string& filepath) {

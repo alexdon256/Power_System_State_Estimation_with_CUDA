@@ -63,12 +63,13 @@ struct NetworkModel::CudaMemoryPool {
 #endif
 
 NetworkModel::NetworkModel() 
-    : baseMVA_(100.0), referenceBus_(-1)
+    : baseMVA_(100.0)
 #ifdef USE_CUDA
     , gpuMemoryPool_(std::make_unique<CudaMemoryPool>())
     , deviceDataDirty_(true)
 #endif
-    , adjacencyDirty_(true) {
+    , adjacencyDirty_(true)
+    , referenceBus_(-1) {
 }
 
 NetworkModel::~NetworkModel() = default;
@@ -276,7 +277,7 @@ void NetworkModel::buildAdmittanceMatrix(std::vector<Complex>& Y,
         for (Index idx = start; idx < end; ++idx) {
             Index j = colInd[idx];
             
-            if (i == j) {
+            if (static_cast<Index>(i) == j) {
                 // Diagonal: sum of shunt admittances
                 Complex yShunt(buses_[i]->getGShunt(), buses_[i]->getBShunt());
                 
@@ -370,7 +371,9 @@ void NetworkModel::clear() {
 }
 
 void NetworkModel::invalidateCaches() {
+#ifdef USE_CUDA
     deviceDataDirty_ = true;
+#endif
     adjacencyDirty_ = true;
 }
 
@@ -499,7 +502,7 @@ void NetworkModel::updateDeviceData() const {
 }
 #endif
 
-void NetworkModel::computeVoltEstimates(const StateVector& state, bool useGPU) {
+void NetworkModel::computeVoltEstimates(const StateVector& state, bool /* useGPU */) {
     size_t nBuses = buses_.size();
     const Real PI = 3.14159265359;
     const Real RAD_TO_DEG = 180.0 / PI;
@@ -577,7 +580,7 @@ void NetworkModel::computePowerInjections(const StateVector& state,
                                           std::vector<Real>& qInjection,
                                           bool useGPU) const {
     size_t nBuses = buses_.size();
-    size_t nBranches = branches_.size();
+    (void)useGPU;  // May be used in GPU path
     pInjection.assign(nBuses, 0.0);
     qInjection.assign(nBuses, 0.0);
     
@@ -645,7 +648,7 @@ void NetworkModel::computePowerInjections(const StateVector& state,
         const Bus* bus = buses_[i].get();
         Real v = state.getVoltageMagnitude(static_cast<Index>(i));
         Real v2 = v * v;  // Reuse v^2 computation
-        Real theta = state.getVoltageAngle(static_cast<Index>(i));
+        // Note: theta not needed for shunt-only contribution calculation
         
         // Shunt contribution
         pInjection[i] = v2 * bus->getGShunt();
@@ -681,6 +684,7 @@ void NetworkModel::computePowerFlows(const StateVector& state,
                                      std::vector<Real>& pFlow, 
                                      std::vector<Real>& qFlow,
                                      bool useGPU) const {
+    (void)useGPU;  // May be used in GPU path
     size_t nBranches = branches_.size();
     pFlow.assign(nBranches, 0.0);
     qFlow.assign(nBranches, 0.0);
