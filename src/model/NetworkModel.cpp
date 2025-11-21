@@ -62,12 +62,14 @@ struct NetworkModel::CudaMemoryPool {
 };
 #endif
 
-NetworkModel::NetworkModel() 
+NetworkModel::NetworkModel()
 #ifdef USE_CUDA
     : gpuMemoryPool_(std::make_unique<CudaMemoryPool>())
     , deviceDataDirty_(true)
-#endif
+    , adjacencyDirty_(true)
+#else
     : adjacencyDirty_(true)
+#endif
     , baseMVA_(100.0)
     , referenceBus_(-1) {
     // Initialization order: CUDA members (if enabled) -> adjacencyDirty_ -> baseMVA_ -> referenceBus_
@@ -581,6 +583,7 @@ void NetworkModel::computePowerInjections(const StateVector& state,
                                           std::vector<Real>& qInjection,
                                           bool useGPU) const {
     size_t nBuses = buses_.size();
+    size_t nBranches = branches_.size();
     (void)useGPU;  // May be used in GPU path
     pInjection.assign(nBuses, 0.0);
     qInjection.assign(nBuses, 0.0);
