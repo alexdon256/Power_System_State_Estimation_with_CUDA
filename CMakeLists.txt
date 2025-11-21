@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.18)
 
-# Allow unsupported compiler versions (needed for newer VS2022 with CUDA 11.8)
+# Allow unsupported compiler versions (needed for CUDA 11.x with newer VS2022)
+# Note: CUDA 12.1+ has better MSVC support and may not need this flag
 # Must be set before project() so it applies during compiler detection
 # Set as normal variable first (for compiler identification), then cache (for later use)
 

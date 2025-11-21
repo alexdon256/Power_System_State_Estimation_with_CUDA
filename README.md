@@ -42,7 +42,7 @@ See [PERFORMANCE.md](docs/PERFORMANCE.md) for complete performance guide.
 
 ## Requirements
 
-- CUDA Toolkit 11.0 or higher
+- CUDA Toolkit 12.0 or higher (12.1+ recommended for better MSVC support)
 - CMake 3.18 or higher
 - C++17 compatible compiler
 - NVIDIA GPU with compute capability 7.5 or higher

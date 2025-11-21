@@ -1,7 +1,8 @@
 # CMake Toolchain file for CUDA with unsupported compiler support
 # This file is loaded before project() call, allowing flags to be set early
 
-# Set CUDA flags for unsupported compiler versions (needed for newer VS2022 with CUDA 11.8)
+# Set CUDA flags for unsupported compiler versions (needed for CUDA 11.x with newer VS2022)
+# Note: CUDA 12.1+ has better MSVC support and may not need this flag
 # These must be set as initial values before project() processes CUDA language
 if(NOT DEFINED CMAKE_CUDA_FLAGS_INIT)
     set(CMAKE_CUDA_FLAGS_INIT "-allow-unsupported-compiler" CACHE STRING "Initial CUDA compiler flags" FORCE)

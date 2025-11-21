@@ -6,7 +6,9 @@ Complete guide for building the Power System State Estimation project with CUDA 
 
 ### Required Software
 
-1. **CUDA Toolkit 11.0 or higher**
+1. **CUDA Toolkit 12.0 or higher** (12.1+ recommended)
+   - CUDA 12.1+ has better support for newer MSVC versions (VS2022 14.44+)
+   - CUDA 11.8 may require `-allow-unsupported-compiler` flag for newer MSVC
    - Download from: https://developer.nvidia.com/cuda-downloads
    - Verify installation:
      ```bash
@@ -159,9 +161,10 @@ cmake --build . -j$(nproc)
 ### Windows
 
 ```bash
-# Install CUDA Toolkit from NVIDIA website
+# Install CUDA Toolkit 12.1+ from NVIDIA website (better MSVC support)
 # Ensure Visual Studio 2017+ is installed
-# Note: VS2022 14.44+ requires -allow-unsupported-compiler flag (automatically set)
+# Note: CUDA 12.1+ has better support for VS2022 14.44+ (may not need -allow-unsupported-compiler)
+# CUDA 11.x with VS2022 14.44+ requires -allow-unsupported-compiler flag (automatically set)
 
 # Open Developer Command Prompt for VS
 # Navigate to project
@@ -214,7 +217,7 @@ cmake .. -DCUDA_ARCH=sm_XX  # Replace XX with your GPU's compute capability
 **Error:** `CUDA version X.X is required, but found Y.Y`
 
 **Solution:**
-- Install CUDA Toolkit 11.0 or higher
+- Install CUDA Toolkit 12.0 or higher (12.1+ recommended)
 - Update NVIDIA drivers: `nvidia-smi` shows required driver version
 
 ### Issue: Compilation Errors in CUDA Files
