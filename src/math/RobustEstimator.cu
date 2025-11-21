@@ -14,6 +14,11 @@
 namespace sle {
 namespace math {
 
+using model::StateVector;
+using model::NetworkModel;
+using model::TelemetryData;
+using model::MeasurementModel;
+
 RobustEstimator::RobustEstimator() {
     config_.weightFunction = RobustWeightFunction::HUBER;
     config_.tuningConstant = 1.345;

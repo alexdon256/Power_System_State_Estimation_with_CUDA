@@ -50,12 +50,12 @@ public:
         Real finalNorm;
         Real objectiveValue;
         std::vector<Real> weights;  // Final robust weights
-        std::unique_ptr<StateVector> state;
+        std::unique_ptr<model::StateVector> state;
         std::string message;
     };
     
-    RobustResult estimate(StateVector& state, const NetworkModel& network,
-                         const TelemetryData& telemetry);
+    RobustResult estimate(model::StateVector& state, const model::NetworkModel& network,
+                         const model::TelemetryData& telemetry);
     
     // Compute robust weights based on residuals
     void computeRobustWeights(const std::vector<Real>& residuals,
@@ -75,8 +75,8 @@ private:
     std::function<Real(Real)> getWeightFunction() const;
     
     // Iteratively reweighted least squares (IRLS)
-    RobustResult solveIRLS(StateVector& state, const NetworkModel& network,
-                          const TelemetryData& telemetry);
+    RobustResult solveIRLS(model::StateVector& state, const model::NetworkModel& network,
+                          const model::TelemetryData& telemetry);
 };
 
 } // namespace math
