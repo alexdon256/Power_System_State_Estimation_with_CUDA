@@ -8,6 +8,10 @@
 #include <sle/model/StateVector.h>
 #include <cmath>
 
+#ifdef _MSC_VER
+#include <intrin.h>  // For _sincos on MSVC
+#endif
+
 namespace sle {
 namespace model {
 
@@ -55,14 +59,35 @@ void Branch::computePowerFlow(const StateVector& state, Index fromBusIdx, Index 
     Real phase = phaseShift_;
     Real thetaDiff = thetaFrom - thetaTo - phase;
     
-    Real cosDiff = std::cos(thetaDiff);
-    Real sinDiff = std::sin(thetaDiff);
+    // Use sincos for simultaneous sin/cos computation (more efficient)
+    // This is similar to the GPU version and reduces function call overhead
+    Real sinDiff, cosDiff;
+#ifdef _MSC_VER
+    _sincos(thetaDiff, &sinDiff, &cosDiff);
+#elif defined(__GNUC__) || defined(__clang__)
+    sincos(thetaDiff, &sinDiff, &cosDiff);
+#else
+    // Fallback: separate calls (compiler may optimize)
+    sinDiff = std::sin(thetaDiff);
+    cosDiff = std::cos(thetaDiff);
+#endif
     
     // Power flow from -> to
+    // Optimized computation with reduced operations and better numerical stability
     Real tap2 = tap * tap;
-    pFlow = (vFrom * vFrom * g / tap2) - (vFrom * vTo * (g * cosDiff + b_series * sinDiff) / tap);
-    qFlow = (-vFrom * vFrom * (b_series + b_ * 0.5) / tap2) - 
-            (vFrom * vTo * (g * sinDiff - b_series * cosDiff) / tap);
+    Real inv_tap2 = 1.0 / tap2;
+    Real inv_tap = 1.0 / tap;
+    Real vFrom2 = vFrom * vFrom;
+    Real vFrom_vTo = vFrom * vTo;
+    
+    // Compute terms efficiently (reduces redundant multiplications)
+    Real term1_p = vFrom2 * g * inv_tap2;
+    Real term2_p = vFrom_vTo * (g * cosDiff + b_series * sinDiff) * inv_tap;
+    pFlow = term1_p - term2_p;
+    
+    Real term1_q = -vFrom2 * (b_series + b_ * 0.5) * inv_tap2;
+    Real term2_q = vFrom_vTo * (g * sinDiff - b_series * cosDiff) * inv_tap;
+    qFlow = term1_q - term2_q;
 }
 
 void Branch::computePowerFlowMW(const StateVector& state, Index fromBusIdx, Index toBusIdx,
@@ -75,7 +100,8 @@ void Branch::computePowerFlowMW(const StateVector& state, Index fromBusIdx, Inde
 
 Real Branch::computeCurrentMagnitude(Real pFlow, Real qFlow, Real vFrom) const {
     // I = |S| / V = sqrt(P² + Q²) / V
-    Real sMag = std::sqrt(pFlow * pFlow + qFlow * qFlow);
+    // Optimized: use hypot for better numerical stability and potentially faster
+    Real sMag = std::hypot(pFlow, qFlow);  // More accurate than sqrt(p²+q²)
     return sMag / vFrom;  // Current in p.u.
 }
 

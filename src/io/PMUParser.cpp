@@ -76,7 +76,9 @@ bool PMUParser::parseDataFrame(const uint8_t* buffer, size_t length, PMUFrame& f
                               (buffer[offset + 2] << 8) | buffer[offset + 3];
             offset += 4;
             
-            Real magnitude = *reinterpret_cast<const float*>(&magInt);
+            // Use memcpy to avoid strict aliasing violation
+            Real magnitude;
+            std::memcpy(&magnitude, &magInt, sizeof(Real));
             Real angle = *reinterpret_cast<const int32_t*>(&angleInt) * 1e-7;  // Convert to radians
             angle = angle * M_PI / 180.0;  // Convert from degrees to radians
             
@@ -91,8 +93,10 @@ bool PMUParser::parseDataFrame(const uint8_t* buffer, size_t length, PMUFrame& f
                               (buffer[offset + 2] << 8) | buffer[offset + 3];
             offset += 4;
             
-            Real real = *reinterpret_cast<const float*>(&realInt);
-            Real imag = *reinterpret_cast<const float*>(&imagInt);
+            // Use memcpy to avoid strict aliasing violation
+            Real real, imag;
+            std::memcpy(&real, &realInt, sizeof(Real));
+            std::memcpy(&imag, &imagInt, sizeof(Real));
             
             frame.phasors.push_back(Complex(real, imag));
         }
@@ -104,7 +108,9 @@ bool PMUParser::parseDataFrame(const uint8_t* buffer, size_t length, PMUFrame& f
         uint32_t freqInt = (buffer[offset] << 24) | (buffer[offset + 1] << 16) |
                           (buffer[offset + 2] << 8) | buffer[offset + 3];
         offset += 4;
-        Real freq = *reinterpret_cast<const float*>(&freqInt);
+        // Use memcpy to avoid strict aliasing violation
+        Real freq;
+        std::memcpy(&freq, &freqInt, sizeof(Real));
         frame.frequencies.push_back(freq);
     }
     
@@ -114,7 +120,9 @@ bool PMUParser::parseDataFrame(const uint8_t* buffer, size_t length, PMUFrame& f
         uint32_t dfreqInt = (buffer[offset] << 24) | (buffer[offset + 1] << 16) |
                            (buffer[offset + 2] << 8) | buffer[offset + 3];
         offset += 4;
-        Real dfreq = *reinterpret_cast<const float*>(&dfreqInt);
+        // Use memcpy to avoid strict aliasing violation
+        Real dfreq;
+        std::memcpy(&dfreq, &dfreqInt, sizeof(Real));
         frame.dfreq.push_back(dfreq);
     }
     

@@ -51,12 +51,13 @@ MultiAreaEstimator::MultiAreaResult MultiAreaEstimator::estimateHierarchical() {
         auto it = areaEstimators_.find(area.name);
         if (it != areaEstimators_.end()) {
             auto areaResult = it->second->estimate();
-            result.areaResults[area.name] = areaResult;
+            // Access values before move
             result.totalIterations += areaResult.iterations;
-            
             if (!areaResult.converged) {
                 result.converged = false;
             }
+            // Use emplace with move to avoid copying unique_ptr
+            result.areaResults.emplace(area.name, std::move(areaResult));
         }
     }
     
@@ -105,11 +106,12 @@ MultiAreaEstimator::MultiAreaResult MultiAreaEstimator::estimateDistributed(
             auto it = areaEstimators_.find(area.name);
             if (it != areaEstimators_.end()) {
                 auto areaResult = it->second->estimateIncremental();
-                result.areaResults[area.name] = areaResult;
-                
+                // Access values before move
                 if (!areaResult.converged) {
                     converged = false;
                 }
+                // Use emplace with move to avoid copying unique_ptr
+                result.areaResults.emplace(area.name, std::move(areaResult));
             }
         }
         

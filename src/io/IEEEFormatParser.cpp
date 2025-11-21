@@ -97,7 +97,8 @@ void IEEEFormatParser::parseBusData(std::istringstream& iss, model::NetworkModel
 void IEEEFormatParser::parseBranchData(std::istringstream& iss, model::NetworkModel& network) {
     BranchId branchId;
     BusId fromBus, toBus;
-    Real r, x, b, rateA, rateB, rateC, ratio, angle;
+    Real r, x, b, rateA, ratio, angle;
+    // rateB and rateC are not used in IEEE format parsing
     int status;
     
     if (iss >> fromBus >> toBus >> r >> x >> b >> rateA >> ratio >> angle >> status) {
