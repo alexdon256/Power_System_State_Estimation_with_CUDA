@@ -22,6 +22,10 @@
 namespace sle {
 namespace math {
 
+using model::NetworkModel;
+using model::StateVector;
+using model::TelemetryData;
+
 Solver::Solver() 
     : jacobian_(std::make_unique<JacobianMatrix>()),
       measFuncs_(std::make_unique<MeasurementFunctions>()) {

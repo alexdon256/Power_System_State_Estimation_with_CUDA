@@ -9,10 +9,16 @@
 
 #include <sle/Types.h>
 #include <sle/math/SparseMatrix.h>
-#include <sle/model/NetworkModel.h>
-#include <sle/model/StateVector.h>
-#include <sle/model/TelemetryData.h>
 #include <vector>
+
+// Forward declarations
+namespace sle {
+namespace model {
+    class StateVector;
+    class NetworkModel;
+    class TelemetryData;
+}
+}
 
 namespace sle {
 namespace math {
@@ -23,8 +29,8 @@ public:
     ~JacobianMatrix();
     
     // Build Jacobian matrix H = ∂h/∂x
-    void build(const StateVector& state, const NetworkModel& network,
-               const TelemetryData& telemetry);
+    void build(const model::StateVector& state, const model::NetworkModel& network,
+               const model::TelemetryData& telemetry);
     
     // Get sparse matrix representation
     const SparseMatrix& getMatrix() const { return matrix_; }
@@ -35,15 +41,15 @@ public:
     Index getNCols() const { return nCols_; }
     
     // Build on GPU
-    void buildGPU(const StateVector& state, const NetworkModel& network,
-                  const TelemetryData& telemetry);
+    void buildGPU(const model::StateVector& state, const model::NetworkModel& network,
+                  const model::TelemetryData& telemetry);
     
 private:
     SparseMatrix matrix_;
     Index nRows_;
     Index nCols_;
     
-    void buildStructure(const NetworkModel& network, const TelemetryData& telemetry);
+    void buildStructure(const model::NetworkModel& network, const model::TelemetryData& telemetry);
 };
 
 } // namespace math

@@ -17,6 +17,10 @@
 namespace sle {
 namespace math {
 
+using model::NetworkModel;
+using model::StateVector;
+using model::TelemetryData;
+
 struct MeasurementFunctions::Impl {
     cuda::CudaMemoryManager memoryManager;
     

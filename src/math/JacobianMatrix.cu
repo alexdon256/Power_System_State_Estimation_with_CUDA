@@ -14,6 +14,10 @@
 namespace sle {
 namespace math {
 
+using model::NetworkModel;
+using model::StateVector;
+using model::TelemetryData;
+
 JacobianMatrix::JacobianMatrix() : nRows_(0), nCols_(0) {
 }
 

@@ -8,15 +8,22 @@
 #define SLE_MATH_SOLVER_H
 
 #include <sle/Types.h>
-#include <sle/model/NetworkModel.h>
-#include <sle/model/StateVector.h>
-#include <sle/model/TelemetryData.h>
 #include <sle/math/JacobianMatrix.h>
 #include <sle/math/MeasurementFunctions.h>
 #include <sle/math/SparseMatrix.h>
 #include <memory>
 #include <vector>
+#include <string>
 #include <cuda_runtime.h>
+
+// Forward declarations
+namespace sle {
+namespace model {
+    class StateVector;
+    class NetworkModel;
+    class TelemetryData;
+}
+}
 
 namespace sle {
 namespace math {
@@ -46,8 +53,8 @@ public:
     const SolverConfig& getConfig() const { return config_; }
     
     // Solve WLS state estimation: minimize J(x) = [z - h(x)]^T R^-1 [z - h(x)]
-    SolverResult solve(StateVector& state, const NetworkModel& network,
-                      const TelemetryData& telemetry);
+    SolverResult solve(model::StateVector& state, const model::NetworkModel& network,
+                      const model::TelemetryData& telemetry);
     
 private:
     SolverConfig config_;

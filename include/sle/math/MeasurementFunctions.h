@@ -8,10 +8,17 @@
 #define SLE_MATH_MEASUREMENTFUNCTIONS_H
 
 #include <sle/Types.h>
-#include <sle/model/NetworkModel.h>
-#include <sle/model/StateVector.h>
-#include <sle/model/TelemetryData.h>
 #include <vector>
+#include <memory>
+
+// Forward declarations
+namespace sle {
+namespace model {
+    class StateVector;
+    class NetworkModel;
+    class TelemetryData;
+}
+}
 
 namespace sle {
 namespace math {
@@ -22,12 +29,12 @@ public:
     ~MeasurementFunctions();
     
     // Evaluate measurement functions h(x)
-    void evaluate(const StateVector& state, const NetworkModel& network,
-                  const TelemetryData& telemetry, std::vector<Real>& hx);
+    void evaluate(const model::StateVector& state, const model::NetworkModel& network,
+                  const model::TelemetryData& telemetry, std::vector<Real>& hx);
     
     // Evaluate on GPU
-    void evaluateGPU(const StateVector& state, const NetworkModel& network,
-                     const TelemetryData& telemetry, std::vector<Real>& hx);
+    void evaluateGPU(const model::StateVector& state, const model::NetworkModel& network,
+                     const model::TelemetryData& telemetry, std::vector<Real>& hx);
     
     // Compute residual r = z - h(x)
     void computeResidual(const std::vector<Real>& z, const std::vector<Real>& hx,

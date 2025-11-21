@@ -68,7 +68,7 @@ private:
     std::mutex telemetryMutex_;
     
     std::queue<TelemetryUpdate> updateQueue_;
-    std::mutex queueMutex_;
+    mutable std::mutex queueMutex_;  // Mutable to allow locking in const methods
     std::condition_variable queueCondition_;
     
     std::atomic<bool> running_;
