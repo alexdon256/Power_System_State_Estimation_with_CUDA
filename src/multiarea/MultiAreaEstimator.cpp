@@ -17,7 +17,14 @@
 namespace sle {
 namespace multiarea {
 
-MultiAreaEstimator::MultiAreaEstimator() {
+MultiAreaEstimator::MultiAreaEstimator() = default;
+
+void MultiAreaEstimator::addZone(const Zone& zone) {
+    zones_.push_back(zone);
+    auto estimator = std::make_shared<interface::StateEstimator>();
+    estimator->setNetwork(zone.network);
+    estimator->setTelemetryData(zone.telemetry);
+    zoneEstimators_[zone.name] = estimator;
 }
 
 void MultiAreaEstimator::addArea(const Area& area) {
@@ -29,6 +36,16 @@ void MultiAreaEstimator::addArea(const Area& area) {
     estimator->setTelemetryData(area.telemetry);
     
     areaEstimators_[area.name] = estimator;
+}
+
+void MultiAreaEstimator::addRegion(const Region& region) {
+    regions_.push_back(region);
+    
+    auto estimator = std::make_shared<interface::StateEstimator>();
+    estimator->setNetwork(region.network);
+    estimator->setTelemetryData(region.telemetry);
+    
+    regionEstimators_[region.name] = estimator;
 }
 
 void MultiAreaEstimator::setTieLineMeasurements(
@@ -142,6 +159,24 @@ std::shared_ptr<model::StateVector> MultiAreaEstimator::getAreaState(
     return nullptr;
 }
 
+std::shared_ptr<model::StateVector> MultiAreaEstimator::getZoneState(
+    const std::string& zoneName) {
+    auto it = zoneEstimators_.find(zoneName);
+    if (it != zoneEstimators_.end()) {
+        return it->second->getCurrentState();
+    }
+    return nullptr;
+}
+
+std::shared_ptr<model::StateVector> MultiAreaEstimator::getRegionState(
+    const std::string& regionName) {
+    auto it = regionEstimators_.find(regionName);
+    if (it != regionEstimators_.end()) {
+        return it->second->getCurrentState();
+    }
+    return nullptr;
+}
+
 void MultiAreaEstimator::coordinateTieLineFlows() {
     // Coordinate tie line power flows between areas
     // Ensure consistency at boundaries
@@ -177,6 +212,31 @@ void MultiAreaEstimator::updateBoundaryConditions(
         // Update boundary conditions in the area's network model
         // Simplified - would properly update boundary buses
     }
+}
+
+void MultiAreaEstimator::updateZoneBoundaryConditions(
+    const std::string& zoneName,
+    const model::StateVector& neighborState) {
+    (void)zoneName;
+    (void)neighborState;
+}
+
+void MultiAreaEstimator::updateRegionBoundaryConditions(
+    const std::string& regionName,
+    const model::StateVector& neighborState) {
+    (void)regionName;
+    (void)neighborState;
+}
+
+MultiAreaEstimator::HierarchyLevel MultiAreaEstimator::getHierarchyLevel(
+    const std::string& name) const {
+    if (zoneEstimators_.count(name)) {
+        return HierarchyLevel::ZONE;
+    }
+    if (areaEstimators_.count(name)) {
+        return HierarchyLevel::AREA;
+    }
+    return HierarchyLevel::REGION;
 }
 
 } // namespace multiarea

@@ -83,6 +83,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Source files
 set(SOURCES
+    src/model/Bus.cpp
+    src/model/Branch.cpp
     src/model/NetworkModel.cpp
     src/model/MeasurementModel.cpp
     src/model/StateVector.cpp

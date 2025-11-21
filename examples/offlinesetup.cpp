@@ -210,8 +210,6 @@ int main(int argc, char* argv[]) {
         badDataDetector.setNormalizedResidualThreshold(3.0);
         auto badDataResult = badDataDetector.detectBadData(
             *telemetry, *result.state, *network);
-            auto badDataResult = badDataDetector.detectBadData(
-                *telemetry, *result.state, *network);
         
         if (badDataResult.hasBadData) {
             std::cout << "⚠ Bad data detected in " << badDataResult.badDeviceIds.size() 
