@@ -14,7 +14,20 @@
 #include <memory>
 #include <vector>
 #include <string>
+
+#ifdef USE_CUDA
 #include <cuda_runtime.h>
+#else
+using cudaError_t = int;
+#define cudaSuccess 0
+inline cudaError_t cudaMalloc(void**, size_t) { return cudaSuccess; }
+inline cudaError_t cudaFree(void*) { return cudaSuccess; }
+inline cudaError_t cudaMemcpy(void*, const void*, size_t, int) { return cudaSuccess; }
+inline cudaError_t cudaMemset(void*, int, size_t) { return cudaSuccess; }
+inline cudaError_t cudaDeviceSynchronize() { return cudaSuccess; }
+#define cudaMemcpyHostToDevice 0
+inline const char* cudaGetErrorString(cudaError_t) { return "CUDA disabled"; }
+#endif
 
 // Forward declarations
 namespace sle {
