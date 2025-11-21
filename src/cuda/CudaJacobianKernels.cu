@@ -6,6 +6,7 @@
 
 #include <cuda_runtime.h>
 #include <sle/Types.h>
+#include <sle/cuda/CudaPowerFlow.h>
 #include <cmath>
 
 // Precision-aware intrinsics: automatically detect Real type (double or float)

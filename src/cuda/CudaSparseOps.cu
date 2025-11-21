@@ -10,6 +10,7 @@
 
 #include <cuda_runtime.h>
 #include <cusparse.h>
+#include <cusparse_v2.h>
 #include <cublas_v2.h>
 #include <sle/Types.h>
 
@@ -28,22 +29,33 @@ void sparseMatVec(cusparseHandle_t handle,
     const Real alpha = 1.0;
     const Real beta = 0.0;
     
-    cusparseMatDescr_t descr;
-    cusparseCreateMatDescr(&descr);
-    cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO);
-    
-    // Count non-zeros
     Index nnz = rowPtr[nRows] - rowPtr[0];
     
-    // Use cuSPARSE CSR matrix-vector multiplication
-    cusparseDcsrmv(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                   nRows, nCols, nnz,
-                   &alpha, descr,
-                   values, rowPtr, colInd,
-                   x, &beta, y);
+    cusparseSpMatDescr_t mat;
+    cusparseDnVecDescr_t vecX, vecY;
+    cusparseCreateCsr(&mat,
+                      nRows, nCols, nnz,
+                      const_cast<Index*>(rowPtr), const_cast<Index*>(colInd),
+                      const_cast<Real*>(values),
+                      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+    cusparseCreateDnVec(&vecX, nCols, const_cast<Real*>(x), CUDA_R_64F);
+    cusparseCreateDnVec(&vecY, nRows, y, CUDA_R_64F);
     
-    cusparseDestroyMatDescr(descr);
+    size_t bufferSize = 0;
+    void* dBuffer = nullptr;
+    cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                            &alpha, mat, vecX, &beta, vecY,
+                            CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
+    if (bufferSize > 0) cudaMalloc(&dBuffer, bufferSize);
+    cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                 &alpha, mat, vecX, &beta, vecY,
+                 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer);
+    if (dBuffer) cudaFree(dBuffer);
+    
+    cusparseDestroyDnVec(vecX);
+    cusparseDestroyDnVec(vecY);
+    cusparseDestroySpMat(mat);
 }
 
 // Weighted sparse matrix-vector product: y = W * A * x

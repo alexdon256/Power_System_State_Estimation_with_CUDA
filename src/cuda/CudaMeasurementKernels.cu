@@ -45,22 +45,7 @@
 namespace sle {
 namespace cuda {
 
-// Device data structures
-struct DeviceBus {
-    Real baseKV;
-    Real gShunt;
-    Real bShunt;
-};
-
-struct DeviceBranch {
-    Index fromBus;
-    Index toBus;
-    Real r;
-    Real x;
-    Real b;
-    Real tapRatio;
-    Real phaseShift;
-};
+// Device data structures are declared in CudaPowerFlow.h
 
 // Optimized measurement function kernels with FMA and fast math
 // Combined power flow computation: computes both P and Q in a single pass
