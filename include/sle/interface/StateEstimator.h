@@ -96,7 +96,7 @@ private:
     std::unique_ptr<math::Solver> solver_;
     TelemetryProcessor telemetryProcessor_;
     
-    std::mutex estimationMutex_;
+    mutable std::mutex estimationMutex_;  // Mutable to allow locking in const methods
     std::atomic<bool> modelUpdated_;
     std::atomic<bool> telemetryUpdated_;
     

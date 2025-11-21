@@ -190,7 +190,8 @@ bool StateEstimator::loadFromFiles(const std::string& networkFile, const std::st
         if (!telemetry) {
             return false;
         }
-        setTelemetryData(telemetry);
+        // Convert unique_ptr to shared_ptr
+        setTelemetryData(std::shared_ptr<model::TelemetryData>(telemetry.release()));
         
         return true;
     } catch (...) {
