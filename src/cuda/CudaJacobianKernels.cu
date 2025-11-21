@@ -270,7 +270,7 @@ __global__ void computeJacobianKernel(const Real* v, const Real* theta,
                 for (Index i = rowStart; i < rowEnd; ++i) {
                     jacobianValues[i] = 0.0;
                 }
-                continue;  // Skip to next measurement
+                return;  // No loops below, just exit
             }
             const DeviceBranch& br = branches[branchIdx];
             
@@ -311,7 +311,7 @@ __global__ void computeJacobianKernel(const Real* v, const Real* theta,
                 for (Index i = rowStart; i < rowEnd; ++i) {
                     jacobianValues[i] = 0.0;
                 }
-                continue;  // Skip to next measurement
+                return;
             }
             
             // Allocate shared memory for Jacobian elements
@@ -349,7 +349,7 @@ __global__ void computeJacobianKernel(const Real* v, const Real* theta,
                 for (Index i = rowStart; i < rowEnd; ++i) {
                     jacobianValues[i] = 0.0;
                 }
-                continue;  // Skip to next measurement
+                return;
             }
             
             // dV/dV = 1, dV/dtheta = 0
