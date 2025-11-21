@@ -177,19 +177,18 @@ int main(int argc, char* argv[]) {
         int overloads = 0;
         auto branches = network->getBranches();
         for (auto* branch : branches) {
-            if (branch) {
-                Real pMW = branch->getPMW();
-                Real qMVAR = branch->getQMVAR();
-                Real sFlow = std::sqrt(pMW * pMW + qMVAR * qMVAR);
-                Real rating = branch->getRating();
-                
-                if (rating > 0 && sFlow > rating * 0.9) {
-                    overloads++;
-                    std::cout << "⚠ Branch overload: Branch " << branch->getId() 
-                              << " (" << branch->getFromBus() << " -> " 
-                              << branch->getToBus() << "): " 
-                              << sFlow << " MVA (rating: " << rating << " MVA)\n";
-                }
+            if (!branch) continue;
+                sle::Real pMW = branch->getPMW();
+                sle::Real qMVAR = branch->getQMVAR();
+                sle::Real sFlow = std::sqrt(pMW * pMW + qMVAR * qMVAR);
+                sle::Real rating = branch->getRating();
+            
+            if (rating > 0 && sFlow > rating * 0.9) {
+                overloads++;
+                std::cout << "⚠ Branch overload: Branch " << branch->getId() 
+                          << " (" << branch->getFromBus() << " -> " 
+                          << branch->getToBus() << "): " 
+                          << sFlow << " MVA (rating: " << rating << " MVA)\n";
             }
         }
         if (overloads == 0) {

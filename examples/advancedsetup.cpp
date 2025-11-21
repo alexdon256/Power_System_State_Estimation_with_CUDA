@@ -176,7 +176,9 @@ int main(int argc, char* argv[]) {
         sle::multiarea::Area area1;
         area1.name = "PJM";
         area1.regionName = "Eastern";
-        area1.zones = {"NorthZone", "SouthZone"};
+        area1.zones.clear();
+        area1.zones.push_back(zone1);
+        area1.zones.push_back(zone2);
         multiArea.addArea(area1);
         
         // Create regions (highest level)
