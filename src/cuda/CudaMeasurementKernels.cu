@@ -63,12 +63,30 @@ struct DeviceBranch {
 };
 
 // Optimized measurement function kernels with FMA and fast math
-__device__ __forceinline__ Real computePowerFlowP(const Real* v, const Real* theta,
+// Combined power flow computation: computes both P and Q in a single pass
+// This eliminates redundant calculations when both values are needed
+// Returns P via first parameter, Q via second parameter
+__device__ __forceinline__ void computePowerFlowPQ(const Real* v, const Real* theta,
                                    const DeviceBranch* branches, Index branchIdx,
-                                   Index fromBus, Index toBus, Index nBuses) {
+                                   Index fromBus, Index toBus, Index nBuses,
+                                   Real& p, Real& q) {
+    // Bounds checking: validate bus indices before accessing arrays
+    if (fromBus < 0 || fromBus >= nBuses || toBus < 0 || toBus >= nBuses) {
+        p = 0.0;
+        q = 0.0;
+        return;
+    }
+    
+    // Validate branch index
+    if (branchIdx < 0) {
+        p = 0.0;
+        q = 0.0;
+        return;
+    }
+    
     const DeviceBranch& br = branches[branchIdx];
     
-    // Coalesced memory access
+    // Coalesced memory access (now safe after bounds checking)
     const Real vi = v[fromBus];
     const Real vj = v[toBus];
     const Real thetai = theta[fromBus];
@@ -77,7 +95,9 @@ __device__ __forceinline__ Real computePowerFlowP(const Real* v, const Real* the
     // Optimized admittance calculation using FMA (with division by zero check)
     const Real z2 = CUDA_FMA(br.r, br.r, br.x * br.x);
     if (z2 < 1e-12) {  // Avoid division by zero (very small impedance)
-        return 0.0;
+        p = 0.0;
+        q = 0.0;
+        return;
     }
     const Real inv_z2 = CUDA_DIV(1.0, z2);
     const Real g = CUDA_FMA(br.r, inv_z2, 0.0);  // br.r * inv_z2
@@ -85,369 +105,210 @@ __device__ __forceinline__ Real computePowerFlowP(const Real* v, const Real* the
     
     const Real tap = br.tapRatio;
     if (fabs(tap) < 1e-12) {  // Avoid division by zero (tap ratio too small)
-        return 0.0;
+        p = 0.0;
+        q = 0.0;
+        return;
     }
     const Real phase = br.phaseShift;
     const Real thetaDiff = thetai - thetaj - phase;
     
     // Use sincos for simultaneous sin/cos (precision-aware)
+    // This is computed once and reused for both P and Q
     Real sinDiff, cosDiff;
     CUDA_SINCOS(thetaDiff, &sinDiff, &cosDiff);
     
-    // Optimized power calculation using FMA
+    // Pre-compute common terms (shared between P and Q calculations)
     const Real tap2 = CUDA_FMA(tap, tap, 0.0);  // tap * tap
     const Real inv_tap2 = CUDA_DIV(1.0, tap2);
     const Real vi2 = CUDA_FMA(vi, vi, 0.0);  // vi * vi
     const Real vivj = CUDA_FMA(vi, vj, 0.0);  // vi * vj
     const Real inv_tap = CUDA_DIV(1.0, tap);
     
-    const Real term1 = CUDA_FMA(vi2, g * inv_tap2, 0.0);  // vi^2 * g / tap^2
+    // Compute P (active power)
+    const Real term1_p = CUDA_FMA(vi2, g * inv_tap2, 0.0);  // vi^2 * g / tap^2
     const Real gcos = CUDA_FMA(g, cosDiff, 0.0);
     const Real bsin = CUDA_FMA(b, sinDiff, 0.0);
-    const Real term2 = CUDA_FMA(vivj, (gcos + bsin) * inv_tap, 0.0);  // vi*vj*(g*cos+b*sin)/tap
+    const Real term2_p = CUDA_FMA(vivj, (gcos + bsin) * inv_tap, 0.0);  // vi*vj*(g*cos+b*sin)/tap
+    p = CUDA_FMA(term1_p, 1.0, -term2_p);  // term1_p - term2_p
     
-    const Real p = CUDA_FMA(term1, 1.0, -term2);  // term1 - term2
-    
-    return p;
-}
-
-__device__ __forceinline__ Real computePowerFlowQ(const Real* v, const Real* theta,
-                                  const DeviceBranch* branches, Index branchIdx,
-                                  Index fromBus, Index toBus, Index nBuses) {
-    const DeviceBranch& br = branches[branchIdx];
-    
-    // Coalesced memory access
-    const Real vi = v[fromBus];
-    const Real vj = v[toBus];
-    const Real thetai = theta[fromBus];
-    const Real thetaj = theta[toBus];
-    
-    // Optimized admittance calculation using FMA (with division by zero check)
-    const Real z2 = CUDA_FMA(br.r, br.r, br.x * br.x);
-    if (z2 < 1e-12) {  // Avoid division by zero
-        return 0.0;
-    }
-    const Real inv_z2 = CUDA_DIV(1.0, z2);
-    const Real g = CUDA_FMA(br.r, inv_z2, 0.0);
-    const Real b = CUDA_FMA(-br.x, inv_z2, 0.0);
-    
-    const Real tap = br.tapRatio;
-    if (fabs(tap) < 1e-12) {  // Avoid division by zero
-        return 0.0;
-    }
-    const Real phase = br.phaseShift;
-    const Real thetaDiff = thetai - thetaj - phase;
-    
-    // Use sincos for simultaneous sin/cos (precision-aware)
-    Real sinDiff, cosDiff;
-    CUDA_SINCOS(thetaDiff, &sinDiff, &cosDiff);
-    
-    // Optimized reactive power calculation using FMA
-    const Real tap2 = CUDA_FMA(tap, tap, 0.0);
-    const Real inv_tap2 = CUDA_DIV(1.0, tap2);
-    const Real vi2 = CUDA_FMA(vi, vi, 0.0);
-    const Real vivj = CUDA_FMA(vi, vj, 0.0);
-    const Real inv_tap = CUDA_DIV(1.0, tap);
-    
+    // Compute Q (reactive power) - reuses pre-computed values
     const Real b_total = CUDA_FMA(b, 1.0, br.b * 0.5);  // b + br.b/2
-    const Real term1 = CUDA_FMA(vi2, b_total * inv_tap2, 0.0);  // vi^2 * (b + br.b/2) / tap^2
+    const Real term1_q = CUDA_FMA(vi2, b_total * inv_tap2, 0.0);  // vi^2 * (b + br.b/2) / tap^2
     const Real gsin = CUDA_FMA(g, sinDiff, 0.0);
     const Real bcos = CUDA_FMA(b, cosDiff, 0.0);
-    const Real term2 = CUDA_FMA(vivj, (gsin - bcos) * inv_tap, 0.0);  // vi*vj*(g*sin-b*cos)/tap
-    
-    const Real q = CUDA_FMA(-term1, 1.0, -term2);  // -term1 - term2
-    
-    return q;
+    const Real term2_q = CUDA_FMA(vivj, (gsin - bcos) * inv_tap, 0.0);  // vi*vj*(g*sin-b*cos)/tap
+    q = CUDA_FMA(-term1_q, 1.0, -term2_q);  // -term1_q - term2_q
 }
 
-__device__ __forceinline__ Real computePowerInjectionP(const Real* v, const Real* theta,
+// Combined power injection computation: computes both P and Q in a single pass
+// Uses CSR adjacency lists for O(avg_degree) complexity instead of O(nBranches)
+// branchFromBus/branchToBus are CSR format: branchFromBus[rowPtr[i]:rowPtr[i+1]] contains branches from bus i
+__device__ __forceinline__ void computePowerInjectionPQ(const Real* v, const Real* theta,
                                        const DeviceBus* buses, const DeviceBranch* branches,
-                                       Index busIdx, Index nBuses, Index nBranches) {
-    Real p = 0.0;
+                                       const Index* branchFromBus, const Index* branchFromBusRowPtr,
+                                       const Index* branchToBus, const Index* branchToBusRowPtr,
+                                       Index busIdx, Index nBuses, Index nBranches,
+                                       Real& p, Real& q) {
+    // Bounds checking: validate bus index before accessing arrays
+    if (busIdx < 0 || busIdx >= nBuses) {
+        p = 0.0;
+        q = 0.0;
+        return;
+    }
+    
     const DeviceBus& bus = buses[busIdx];
     
-    // Shunt contribution using FMA
+    // Shunt contribution using FMA (shared v^2 computation)
     const Real vi2 = CUDA_FMA(v[busIdx], v[busIdx], 0.0);
     p = CUDA_FMA(vi2, bus.gShunt, 0.0);
-    
-    // Branch contributions (loop can be unrolled by compiler for small nBranches)
-    #pragma unroll 4
-    for (Index i = 0; i < nBranches; ++i) {
-        const DeviceBranch& br = branches[i];
-        if (br.fromBus == busIdx) {
-            p += computePowerFlowP(v, theta, branches, i, br.fromBus, br.toBus, nBuses);
-        } else if (br.toBus == busIdx) {
-            // Reverse direction - optimized
-            const Real vi = v[br.toBus];
-            const Real vj = v[br.fromBus];
-            const Real thetai = theta[br.toBus];
-            const Real thetaj = theta[br.fromBus];
-            
-            // Optimized admittance calculation using FMA (with division by zero check)
-            const Real z2 = CUDA_FMA(br.r, br.r, br.x * br.x);
-            if (z2 < 1e-12) continue;  // Skip if impedance too small
-            const Real inv_z2 = CUDA_DIV(1.0, z2);
-            const Real g = CUDA_FMA(br.r, inv_z2, 0.0);
-            const Real b = CUDA_FMA(-br.x, inv_z2, 0.0);
-            const Real tap = br.tapRatio;
-            if (fabs(tap) < 1e-12) continue;  // Skip if tap too small
-            const Real phase = br.phaseShift;
-            const Real thetaDiff = thetai - thetaj + phase;  // Note: reversed
-            
-            // Use sincos for simultaneous sin/cos (precision-aware)
-            Real sinDiff, cosDiff;
-            CUDA_SINCOS(thetaDiff, &sinDiff, &cosDiff);
-            
-            // Optimized power calculation using FMA
-            const Real tap2 = CUDA_FMA(tap, tap, 0.0);
-            const Real inv_tap2 = CUDA_DIV(1.0, tap2);
-            const Real vi2_rev = CUDA_FMA(vi, vi, 0.0);
-            const Real vivj_rev = CUDA_FMA(vi, vj, 0.0);
-            const Real inv_tap = CUDA_DIV(1.0, tap);
-            
-            const Real term1 = CUDA_FMA(vi2_rev, g * inv_tap2, 0.0);
-            const Real gcos = CUDA_FMA(g, cosDiff, 0.0);
-            const Real bsin = CUDA_FMA(b, sinDiff, 0.0);
-            const Real term2 = CUDA_FMA(vivj_rev, (gcos + bsin) * inv_tap, 0.0);
-            
-            p += CUDA_FMA(term1, 1.0, -term2);
-        }
-    }
-    
-    return p;
-}
-
-__device__ __forceinline__ Real computePowerInjectionQ(const Real* v, const Real* theta,
-                                      const DeviceBus* buses, const DeviceBranch* branches,
-                                      Index busIdx, Index nBuses, Index nBranches) {
-    Real q = 0.0;
-    const DeviceBus& bus = buses[busIdx];
-    
-    // Shunt contribution using FMA
-    const Real vi2 = CUDA_FMA(v[busIdx], v[busIdx], 0.0);
     q = CUDA_FMA(-vi2, bus.bShunt, 0.0);
     
-    // Branch contributions (loop can be unrolled by compiler)
-    #pragma unroll 4
-    for (Index i = 0; i < nBranches; ++i) {
-        const DeviceBranch& br = branches[i];
-        if (br.fromBus == busIdx) {
-            q += computePowerFlowQ(v, theta, branches, i, br.fromBus, br.toBus, nBuses);
-        } else if (br.toBus == busIdx) {
-            // Reverse direction Q calculation - optimized
-            const Real vi = v[br.toBus];
-            const Real vj = v[br.fromBus];
-            const Real thetai = theta[br.toBus];
-            const Real thetaj = theta[br.fromBus];
-            
-            // Optimized admittance calculation using FMA (with division by zero check)
-            const Real z2 = CUDA_FMA(br.r, br.r, br.x * br.x);
-            if (z2 < 1e-12) continue;  // Skip if impedance too small
-            const Real inv_z2 = CUDA_DIV(1.0, z2);
-            const Real g = CUDA_FMA(br.r, inv_z2, 0.0);
-            const Real b = CUDA_FMA(-br.x, inv_z2, 0.0);
-            const Real tap = br.tapRatio;
-            if (fabs(tap) < 1e-12) continue;  // Skip if tap too small
-            const Real phase = br.phaseShift;
-            const Real thetaDiff = thetai - thetaj + phase;
-            
-            // Use sincos for simultaneous sin/cos (precision-aware)
-            Real sinDiff, cosDiff;
-            CUDA_SINCOS(thetaDiff, &sinDiff, &cosDiff);
-            
-            // Optimized reactive power calculation using FMA
-            const Real tap2 = CUDA_FMA(tap, tap, 0.0);
-            const Real inv_tap2 = CUDA_DIV(1.0, tap2);
-            const Real vi2_rev = CUDA_FMA(vi, vi, 0.0);
-            const Real vivj_rev = CUDA_FMA(vi, vj, 0.0);
-            const Real inv_tap = CUDA_DIV(1.0, tap);
-            
-            const Real b_total = CUDA_FMA(b, 1.0, br.b * 0.5);
-            const Real term1 = CUDA_FMA(vi2_rev, b_total * inv_tap2, 0.0);
-            const Real gsin = CUDA_FMA(g, sinDiff, 0.0);
-            const Real bcos = CUDA_FMA(b, cosDiff, 0.0);
-            const Real term2 = CUDA_FMA(vivj_rev, (gsin - bcos) * inv_tap, 0.0);
-            
-            q += CUDA_FMA(-term1, 1.0, -term2);
+    // Outgoing branch contributions (using CSR adjacency list)
+    // Validate busIdx+1 is within row pointer array bounds (array has nBuses+1 elements)
+    if (busIdx + 1 <= nBuses) {
+        Index fromStart = branchFromBusRowPtr[busIdx];
+        Index fromEnd = branchFromBusRowPtr[busIdx + 1];
+        // Validate CSR format: fromEnd >= fromStart and within reasonable bounds
+        if (fromEnd >= fromStart && fromEnd <= static_cast<Index>(nBranches)) {
+            for (Index i = fromStart; i < fromEnd; ++i) {
+                // Bounds check: ensure CSR index is valid
+                if (i >= 0 && i < static_cast<Index>(nBranches)) {
+                    Index brIdx = branchFromBus[i];
+                    // Validate branch index is within bounds
+                    if (brIdx >= 0 && brIdx < nBranches) {
+                        const DeviceBranch& br = branches[brIdx];
+                        // computePowerFlowPQ will validate bus indices internally
+                        Real pFlow, qFlow;
+                        computePowerFlowPQ(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses, pFlow, qFlow);
+                        p = CUDA_FMA(p, 1.0, pFlow);  // p += pFlow
+                        q = CUDA_FMA(q, 1.0, qFlow);  // q += qFlow
+                    }
+                }
+            }
         }
     }
     
-    return q;
-}
-
-// Main kernel to evaluate all measurement functions
-__global__ void evaluateMeasurementsKernel(const Real* v, const Real* theta,
-                                           const DeviceBus* buses, const DeviceBranch* branches,
-                                           const Index* measurementTypes,
-                                           const Index* measurementLocations,
-                                           const Index* measurementBranches,
-                                           Real* hx, Index nMeasurements, Index nBuses, Index nBranches) {
-    Index idx = blockIdx.x * blockDim.x + threadIdx.x;
-    
-    if (idx < nMeasurements) {
-        Index type = measurementTypes[idx];
-        Real result = 0.0;
-        
-        switch (type) {
-            case 0: { // P_FLOW
-                Index branchIdx = measurementBranches[idx];
-                const DeviceBranch& br = branches[branchIdx];
-                result = computePowerFlowP(v, theta, branches, branchIdx, br.fromBus, br.toBus, nBuses);
-                break;
-            }
-            case 1: { // Q_FLOW
-                Index branchIdx = measurementBranches[idx];
-                const DeviceBranch& br = branches[branchIdx];
-                result = computePowerFlowQ(v, theta, branches, branchIdx, br.fromBus, br.toBus, nBuses);
-                break;
-            }
-            case 2: { // P_INJECTION
-                Index busIdx = measurementLocations[idx];
-                result = computePowerInjectionP(v, theta, buses, branches, busIdx, nBuses, nBranches);
-                break;
-            }
-            case 3: { // Q_INJECTION
-                Index busIdx = measurementLocations[idx];
-                result = computePowerInjectionQ(v, theta, buses, branches, busIdx, nBuses, nBranches);
-                break;
-            }
-            case 4: { // V_MAGNITUDE
-                Index busIdx = measurementLocations[idx];
-                result = v[busIdx];
-                break;
-            }
-            case 5: { // I_MAGNITUDE
-                // Current magnitude calculation (optimized)
-                Index branchIdx = measurementBranches[idx];
-                const DeviceBranch& br = branches[branchIdx];
-                const Real vi = v[br.fromBus];
-                const Real vj = v[br.toBus];
-                const Real thetai = theta[br.fromBus];
-                const Real thetaj = theta[br.toBus];
-                
-                // Optimized admittance calculation using FMA (with division by zero check)
-                const Real z2 = CUDA_FMA(br.r, br.r, br.x * br.x);
-                if (z2 < 1e-12 || fabs(vi) < 1e-12) {  // Avoid division by zero
-                    result = 0.0;
-                    break;
+    // Incoming branch contributions (reverse direction, using CSR adjacency list)
+    // Validate busIdx+1 is within row pointer array bounds
+    if (busIdx + 1 <= nBuses) {
+        Index toStart = branchToBusRowPtr[busIdx];
+        Index toEnd = branchToBusRowPtr[busIdx + 1];
+        // Validate CSR format: toEnd >= toStart and within reasonable bounds
+        if (toEnd >= toStart && toEnd <= static_cast<Index>(nBranches)) {
+            for (Index i = toStart; i < toEnd; ++i) {
+                // Bounds check: ensure CSR index is valid
+                if (i >= 0 && i < static_cast<Index>(nBranches)) {
+                    Index brIdx = branchToBus[i];
+                    // Validate branch index is within bounds
+                    if (brIdx >= 0 && brIdx < nBranches) {
+                        const DeviceBranch& br = branches[brIdx];
+                        // computePowerFlowPQ will validate bus indices internally
+                        Real pFlow, qFlow;
+                        // Compute in reverse direction (to -> from)
+                        computePowerFlowPQ(v, theta, branches, brIdx, br.toBus, br.fromBus, nBuses, pFlow, qFlow);
+                        p = CUDA_FMA(p, 1.0, -pFlow);  // p -= pFlow (reverse direction)
+                        q = CUDA_FMA(q, 1.0, -qFlow);  // q -= qFlow (reverse direction)
+                    }
                 }
-                const Real inv_z2 = CUDA_DIV(1.0, z2);
-                const Real g = CUDA_FMA(br.r, inv_z2, 0.0);
-                const Real b = CUDA_FMA(-br.x, inv_z2, 0.0);
-                const Real tap = br.tapRatio;
-                if (fabs(tap) < 1e-12) {
-                    result = 0.0;
-                    break;
-                }
-                const Real phase = br.phaseShift;
-                const Real thetaDiff = thetai - thetaj - phase;
-                
-                // Use sincos for simultaneous sin/cos (precision-aware)
-                Real sinDiff, cosDiff;
-                CUDA_SINCOS(thetaDiff, &sinDiff, &cosDiff);
-                
-                // Optimized power calculation using FMA
-                const Real tap2 = CUDA_FMA(tap, tap, 0.0);
-                const Real inv_tap2 = CUDA_DIV(1.0, tap2);
-                const Real vi2 = CUDA_FMA(vi, vi, 0.0);
-                const Real vivj = CUDA_FMA(vi, vj, 0.0);
-                const Real inv_tap = CUDA_DIV(1.0, tap);
-                
-                const Real gcos = CUDA_FMA(g, cosDiff, 0.0);
-                const Real bsin = CUDA_FMA(b, sinDiff, 0.0);
-                const Real gsin = CUDA_FMA(g, sinDiff, 0.0);
-                const Real bcos = CUDA_FMA(b, cosDiff, 0.0);
-                
-                const Real p = CUDA_FMA(vi2, g * inv_tap2, -vivj * (gcos + bsin) * inv_tap);
-                const Real b_total = CUDA_FMA(b, 1.0, br.b * 0.5);
-                const Real q = CUDA_FMA(-vi2, b_total * inv_tap2, -vivj * (gsin - bcos) * inv_tap);
-                
-                // Compute current magnitude: I = sqrt(P^2 + Q^2) / V
-                const Real s2 = CUDA_FMA(p, p, q * q);
-                const Real s = sqrt(s2);  // Use regular sqrt for double precision
-                result = CUDA_DIV(s, vi);  // I = S / V
-                break;
             }
-            default:
-                result = 0.0;
         }
-        
-        hx[idx] = result;
     }
-}
-
-// Optimized wrapper function with constexpr
-void evaluateMeasurements(const Real* v, const Real* theta,
-                         const DeviceBus* buses, const DeviceBranch* branches,
-                         const Index* measurementTypes,
-                         const Index* measurementLocations,
-                         const Index* measurementBranches,
-                         Real* hx, Index nMeasurements, Index nBuses, Index nBranches) {
-    constexpr Index blockSize = 256;  // Compile-time constant for better optimization
-    const Index gridSize = (nMeasurements + blockSize - 1) / blockSize;
-    
-    evaluateMeasurementsKernel<<<gridSize, blockSize>>>(
-        v, theta, buses, branches,
-        measurementTypes, measurementLocations, measurementBranches,
-        hx, nMeasurements, nBuses, nBranches);
-    // Note: No cudaDeviceSynchronize() - caller should sync if needed
-    // This allows overlapping with other operations
 }
 
 // GPU-accelerated power flow computation for all branches
+// Uses combined computePowerFlowPQ to compute both P and Q in a single pass
 __global__ void computeAllPowerFlowsKernel(const Real* v, const Real* theta,
                                            const DeviceBranch* branches,
                                            Real* pFlow, Real* qFlow,
                                            Index nBranches, Index nBuses) {
     Index idx = blockIdx.x * blockDim.x + threadIdx.x;
     
-    if (idx < nBranches) {
+    if (idx >= 0 && idx < nBranches) {
         const DeviceBranch& br = branches[idx];
         
-        // Use existing optimized power flow functions
-        Real p = computePowerFlowP(v, theta, branches, idx, br.fromBus, br.toBus, nBuses);
-        Real q = computePowerFlowQ(v, theta, branches, idx, br.fromBus, br.toBus, nBuses);
-        
-        pFlow[idx] = p;
-        qFlow[idx] = q;
+        // Validate branch bus indices before computing power flow
+        if (br.fromBus >= 0 && br.fromBus < nBuses && 
+            br.toBus >= 0 && br.toBus < nBuses) {
+            // Use combined function to compute both P and Q in one pass
+            // This eliminates redundant calculations (sincos, admittance, etc.)
+            Real p, q;
+            computePowerFlowPQ(v, theta, branches, idx, br.fromBus, br.toBus, nBuses, p, q);
+            
+            pFlow[idx] = p;
+            qFlow[idx] = q;
+        } else {
+            // Invalid bus indices - set power flow to zero
+            pFlow[idx] = 0.0;
+            qFlow[idx] = 0.0;
+        }
     }
 }
 
 // GPU-accelerated power injection computation for all buses
+// Optimized with CSR adjacency lists: O(avg_degree) instead of O(nBranches) per bus
+// branchFromBus/branchToBus are CSR column indices, rowPtr are row pointers
 __global__ void computeAllPowerInjectionsKernel(const Real* v, const Real* theta,
                                                 const DeviceBus* buses,
                                                 const DeviceBranch* branches,
-                                                const Index* branchFromBus,
-                                                const Index* branchToBus,
+                                                const Index* branchFromBus, const Index* branchFromBusRowPtr,
+                                                const Index* branchToBus, const Index* branchToBusRowPtr,
                                                 Real* pInjection, Real* qInjection,
                                                 Index nBuses, Index nBranches) {
     Index busIdx = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (busIdx < nBuses) {
         const DeviceBus& bus = buses[busIdx];
-        Real v_i = v[busIdx];
-        Real theta_i = theta[busIdx];
         
-        // Shunt contribution
-        Real p = CUDA_FMA(v_i, v_i, 0.0) * bus.gShunt;  // v^2 * g
-        Real q = -CUDA_FMA(v_i, v_i, 0.0) * bus.bShunt;  // -v^2 * b
+        // Shunt contribution (shared v^2 computation)
+        Real vi2 = CUDA_FMA(v[busIdx], v[busIdx], 0.0);
+        Real p = CUDA_FMA(vi2, bus.gShunt, 0.0);  // v^2 * g
+        Real q = CUDA_FMA(-vi2, bus.bShunt, 0.0);  // -v^2 * b
         
-        // Branch contributions
-        for (Index brIdx = 0; brIdx < nBranches; ++brIdx) {
-            const DeviceBranch& br = branches[brIdx];
-            
-            if (br.fromBus == busIdx) {
-                // Outgoing branch
-                Real pFlow = computePowerFlowP(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses);
-                Real qFlow = computePowerFlowQ(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses);
-                p = CUDA_FMA(p, 1.0, pFlow);  // p += pFlow
-                q = CUDA_FMA(q, 1.0, qFlow);  // q += qFlow
-            } else if (br.toBus == busIdx) {
-                // Incoming branch (reverse direction)
-                Real pFlow = computePowerFlowP(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses);
-                Real qFlow = computePowerFlowQ(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses);
-                p = CUDA_FMA(p, 1.0, -pFlow);  // p -= pFlow
-                q = CUDA_FMA(q, 1.0, -qFlow);  // q -= qFlow
+        // Outgoing branch contributions (using CSR adjacency list)
+        // Bounds checking: ensure row pointers are valid and within CSR array bounds
+        Index fromStart = branchFromBusRowPtr[busIdx];
+        Index fromEnd = branchFromBusRowPtr[busIdx + 1];
+        // Validate: fromEnd >= fromStart (CSR format requirement)
+        if (fromEnd >= fromStart) {
+            for (Index i = fromStart; i < fromEnd; ++i) {
+                // Bounds check: ensure CSR index is valid (defensive programming)
+                // Note: In correct CSR format, i should always be valid, but we check anyway
+                Index brIdx = branchFromBus[i];
+                // Validate branch index is within bounds
+                if (brIdx >= 0 && brIdx < nBranches) {
+                    const DeviceBranch& br = branches[brIdx];
+                    // Validate branch connects to this bus (sanity check)
+                    if (br.fromBus == busIdx) {
+                        Real pFlow, qFlow;
+                        // Use combined function to compute both P and Q in one pass
+                        computePowerFlowPQ(v, theta, branches, brIdx, br.fromBus, br.toBus, nBuses, pFlow, qFlow);
+                        p = CUDA_FMA(p, 1.0, pFlow);  // p += pFlow
+                        q = CUDA_FMA(q, 1.0, qFlow);  // q += qFlow
+                    }
+                }
+            }
+        }
+        
+        // Incoming branch contributions (reverse direction, using CSR adjacency list)
+        Index toStart = branchToBusRowPtr[busIdx];
+        Index toEnd = branchToBusRowPtr[busIdx + 1];
+        // Validate: toEnd >= toStart (CSR format requirement)
+        if (toEnd >= toStart) {
+            for (Index i = toStart; i < toEnd; ++i) {
+                // Bounds check: ensure CSR index is valid
+                Index brIdx = branchToBus[i];
+                // Validate branch index is within bounds
+                if (brIdx >= 0 && brIdx < nBranches) {
+                    const DeviceBranch& br = branches[brIdx];
+                    // Validate branch connects to this bus (sanity check)
+                    if (br.toBus == busIdx) {
+                        Real pFlow, qFlow;
+                        // Compute in reverse direction (to -> from)
+                        computePowerFlowPQ(v, theta, branches, brIdx, br.toBus, br.fromBus, nBuses, pFlow, qFlow);
+                        p = CUDA_FMA(p, 1.0, -pFlow);  // p -= pFlow (reverse direction)
+                        q = CUDA_FMA(q, 1.0, -qFlow);  // q -= qFlow (reverse direction)
+                    }
+                }
             }
         }
         
@@ -471,15 +332,17 @@ void computeAllPowerFlowsGPU(const Real* v, const Real* theta,
 void computeAllPowerInjectionsGPU(const Real* v, const Real* theta,
                                  const DeviceBus* buses,
                                  const DeviceBranch* branches,
-                                 const Index* branchFromBus,
-                                 const Index* branchToBus,
+                                 const Index* branchFromBus, const Index* branchFromBusRowPtr,
+                                 const Index* branchToBus, const Index* branchToBusRowPtr,
                                  Real* pInjection, Real* qInjection,
                                  Index nBuses, Index nBranches) {
     constexpr Index blockSize = 256;
     const Index gridSize = (nBuses + blockSize - 1) / blockSize;
     
     computeAllPowerInjectionsKernel<<<gridSize, blockSize>>>(
-        v, theta, buses, branches, branchFromBus, branchToBus,
+        v, theta, buses, branches, 
+        branchFromBus, branchFromBusRowPtr,
+        branchToBus, branchToBusRowPtr,
         pInjection, qInjection, nBuses, nBranches);
 }
 

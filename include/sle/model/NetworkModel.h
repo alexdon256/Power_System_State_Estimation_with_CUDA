@@ -114,8 +114,12 @@ private:
     // Cached device data structures (updated incrementally)
     mutable std::vector<sle::cuda::DeviceBus> cachedDeviceBuses_;
     mutable std::vector<sle::cuda::DeviceBranch> cachedDeviceBranches_;
-    mutable std::vector<Index> cachedBranchFromBus_;
-    mutable std::vector<Index> cachedBranchToBus_;
+    // CSR format adjacency lists for GPU (column indices)
+    mutable std::vector<Index> cachedBranchFromBus_;  // CSR column indices
+    mutable std::vector<Index> cachedBranchToBus_;    // CSR column indices
+    // CSR format row pointers (nBuses+1 elements)
+    mutable std::vector<Index> cachedBranchFromBusRowPtr_;  // CSR row pointers
+    mutable std::vector<Index> cachedBranchToBusRowPtr_;    // CSR row pointers
     mutable bool deviceDataDirty_;
 #endif
     
@@ -123,6 +127,12 @@ private:
     mutable std::vector<std::vector<Index>> branchesFromBus_;  // branchesFromBus_[busIdx] = branch indices
     mutable std::vector<std::vector<Index>> branchesToBus_;    // branchesToBus_[busIdx] = branch indices
     mutable bool adjacencyDirty_;
+    
+    // Cached CPU vectors for power computations (reused across calls, only resized on network changes)
+    mutable std::vector<Real> cachedPInjection_;
+    mutable std::vector<Real> cachedQInjection_;
+    mutable std::vector<Real> cachedPFlow_;
+    mutable std::vector<Real> cachedQFlow_;
     
     // Helper methods
 #ifdef USE_CUDA

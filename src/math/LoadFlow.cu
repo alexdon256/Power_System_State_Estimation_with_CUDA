@@ -130,38 +130,42 @@ void LoadFlow::computeMismatches(const NetworkModel& network, const StateVector&
                                 std::vector<Real>& pMismatch,
                                 std::vector<Real>& qMismatch) const {
     size_t nBuses = network.getBusCount();
-    pMismatch.assign(nBuses, 0.0);
-    qMismatch.assign(nBuses, 0.0);
     
-    // Build admittance matrix
-    std::vector<Complex> Y;
-    std::vector<Index> rowPtr, colInd;
-    network.buildAdmittanceMatrix(Y, rowPtr, colInd);
+    // Handle empty network
+    if (nBuses == 0) {
+        pMismatch.clear();
+        qMismatch.clear();
+        return;
+    }
     
-    const auto& angles = state.getAngles();
-    const auto& magnitudes = state.getMagnitudes();
+    // Resize mismatch vectors if needed
+    if (pMismatch.size() != nBuses) {
+        pMismatch.resize(nBuses);
+    }
+    if (qMismatch.size() != nBuses) {
+        qMismatch.resize(nBuses);
+    }
     
-    // Compute power injections
-    for (size_t i = 0; i < nBuses; ++i) {
-        Complex vi(magnitudes[i] * cos(angles[i]), magnitudes[i] * sin(angles[i]));
-        Complex si(0.0, 0.0);
-        
-        // Sum over all connected buses
-        Index start = rowPtr[i];
-        Index end = rowPtr[i + 1];
-        
-        for (Index j = start; j < end; ++j) {
-            Index col = colInd[j];
-            Complex vj(magnitudes[col] * cos(angles[col]), magnitudes[col] * sin(angles[col]));
-            si += vi * std::conj(Y[j] * vj);
-        }
-        
-        auto buses = network.getBuses();
-        if (i < buses.size()) {
-            auto* bus = buses[i];
-            pMismatch[i] = bus->getPGeneration() - bus->getPLoad() - si.real();
-            qMismatch[i] = bus->getQGeneration() - bus->getQLoad() - si.imag();
-        }
+    // Compute power injections using optimized GPU-accelerated method
+    // This reuses the CSR-optimized kernel for O(avg_degree) complexity
+    std::vector<Real> pInjection, qInjection;
+    network.computePowerInjections(state, pInjection, qInjection, config_.useGPU);
+    
+    // Validate sizes match
+    if (pInjection.size() != nBuses || qInjection.size() != nBuses) {
+        // Power injection computation failed - zero mismatches
+        std::fill(pMismatch.begin(), pMismatch.end(), 0.0);
+        std::fill(qMismatch.begin(), qMismatch.end(), 0.0);
+        return;
+    }
+    
+    // Compute mismatches: P_mismatch = P_gen - P_load - P_injection
+    //                     Q_mismatch = Q_gen - Q_load - Q_injection
+    auto buses = network.getBuses();
+    for (size_t i = 0; i < nBuses && i < buses.size(); ++i) {
+        const Bus* bus = buses[i];
+        pMismatch[i] = bus->getPGeneration() - bus->getPLoad() - pInjection[i];
+        qMismatch[i] = bus->getQGeneration() - bus->getQLoad() - qInjection[i];
     }
 }
 

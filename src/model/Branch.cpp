@@ -56,6 +56,14 @@ void Branch::computePowerFlow(const StateVector& state, Index fromBusIdx, Index 
     Real g = r_ / z2;
     Real b_series = -x_ / z2;
     Real tap = tapRatio_;
+    
+    // Check for zero tap ratio (division by zero protection)
+    if (std::abs(tap) < 1e-12) {
+        pFlow = 0.0;
+        qFlow = 0.0;
+        return;
+    }
+    
     Real phase = phaseShift_;
     Real thetaDiff = thetaFrom - thetaTo - phase;
     
