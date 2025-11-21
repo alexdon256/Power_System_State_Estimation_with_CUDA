@@ -88,6 +88,11 @@ StateEstimationResult StateEstimator::estimate() {
     result.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     
+    // Update bus voltage estimates so downstream consumers don't need to call explicitly
+    if (network_) {
+        network_->computeVoltEstimates(*currentState_, solverConfig_.useGPU);
+    }
+    
     modelUpdated_.store(false);
     telemetryUpdated_.store(false);
     
@@ -107,7 +112,7 @@ StateEstimationResult StateEstimator::estimateIncremental() {
     // Process pending updates
     telemetryProcessor_.processUpdateQueue();
     
-    // Use tighter tolerance and fewer iterations for incremental updates
+    // Use relaxed tolerance and fewer iterations for incremental updates (faster convergence)
     math::SolverConfig incrementalConfig = solverConfig_;
     incrementalConfig.tolerance = solverConfig_.tolerance * 10.0;  // Relaxed for speed
     incrementalConfig.maxIterations = std::min(solverConfig_.maxIterations, 10);
@@ -124,6 +129,10 @@ StateEstimationResult StateEstimator::estimateIncremental() {
     result.state = std::make_unique<model::StateVector>(*currentState_);
     result.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+    
+    if (network_) {
+        network_->computeVoltEstimates(*currentState_, incrementalConfig.useGPU);
+    }
     
     telemetryUpdated_.store(false);
     

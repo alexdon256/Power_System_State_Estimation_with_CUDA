@@ -146,11 +146,7 @@ int main(int argc, char* argv[]) {
         // STEP 6: Compute All Estimated Values
         // ========================================================================
         std::cout << "=== Computing Estimated Values ===\n";
-        bool useGPU = true;
-        network->computeVoltEstimates(*result.state, useGPU);
-        network->computePowerInjections(*result.state, useGPU);
-        network->computePowerFlows(*result.state, useGPU);
-        std::cout << "✓ All values computed and stored in Bus/Branch objects\n\n";
+        std::cout << "✓ Estimated values ready (solver already populated bus/branch metrics)\n\n";
         
         // ========================================================================
         // STEP 7: System Monitoring

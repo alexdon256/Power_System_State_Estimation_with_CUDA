@@ -146,26 +146,22 @@ void LoadFlow::computeMismatches(const NetworkModel& network, const StateVector&
         qMismatch.resize(nBuses);
     }
     
-    // Compute power injections using optimized GPU-accelerated method
-    // This reuses the CSR-optimized kernel for O(avg_degree) complexity
-    std::vector<Real> pInjection, qInjection;
-    network.computePowerInjections(state, pInjection, qInjection, config_.useGPU);
-    
-    // Validate sizes match
-    if (pInjection.size() != nBuses || qInjection.size() != nBuses) {
-        // Power injection computation failed - zero mismatches
-        std::fill(pMismatch.begin(), pMismatch.end(), 0.0);
-        std::fill(qMismatch.begin(), qMismatch.end(), 0.0);
-        return;
-    }
+    // Compute power injections once and store directly in bus objects
+    model::NetworkModel& modNetwork = const_cast<model::NetworkModel&>(network);
+    modNetwork.computePowerInjections(state, config_.useGPU);
     
     // Compute mismatches: P_mismatch = P_gen - P_load - P_injection
     //                     Q_mismatch = Q_gen - Q_load - Q_injection
     auto buses = network.getBuses();
     for (size_t i = 0; i < nBuses && i < buses.size(); ++i) {
         const Bus* bus = buses[i];
-        pMismatch[i] = bus->getPGeneration() - bus->getPLoad() - pInjection[i];
-        qMismatch[i] = bus->getQGeneration() - bus->getQLoad() - qInjection[i];
+        if (!bus) {
+            pMismatch[i] = 0.0;
+            qMismatch[i] = 0.0;
+            continue;
+        }
+        pMismatch[i] = bus->getPGeneration() - bus->getPLoad() - bus->getPInjection();
+        qMismatch[i] = bus->getQGeneration() - bus->getQLoad() - bus->getQInjection();
     }
 }
 

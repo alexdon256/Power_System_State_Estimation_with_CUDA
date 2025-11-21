@@ -31,15 +31,18 @@ BadDataResult BadDataDetector::detectBadDataChiSquare(
     std::vector<Real> hx;
     measFuncs.evaluate(state, network, telemetry, hx);
     
-    // Compute residuals and weights
+    // Compute residuals, weights, and normalized residuals in a single pass
     std::vector<Real> residuals;
     std::vector<Real> weights;
+    std::vector<Real> normalizedResiduals;
     const auto& measurements = telemetry.getMeasurements();
     
     for (size_t i = 0; i < measurements.size() && i < hx.size(); ++i) {
         Real residual = measurements[i]->getValue() - hx[i];
         residuals.push_back(residual);
         weights.push_back(measurements[i]->getWeight());
+        Real stdDev = measurements[i]->getStdDev();
+        normalizedResiduals.push_back(stdDev > 0 ? residual / stdDev : 0.0);
     }
     
     // Compute chi-square statistic
@@ -56,10 +59,7 @@ BadDataResult BadDataDetector::detectBadDataChiSquare(
     
     if (chiSquare > result.chiSquareThreshold) {
         result.hasBadData = true;
-        
-        // Find measurements with large normalized residuals
-        std::vector<Real> normalizedResiduals = computeNormalizedResiduals(
-            telemetry, state, network);
+        result.normalizedResiduals = normalizedResiduals;
         
         for (size_t i = 0; i < normalizedResiduals.size(); ++i) {
             if (std::abs(normalizedResiduals[i]) > normalizedResidualThreshold_) {
@@ -67,6 +67,8 @@ BadDataResult BadDataDetector::detectBadDataChiSquare(
                 result.badDeviceIds.push_back(measurements[i]->getDeviceId());
             }
         }
+    } else {
+        result.normalizedResiduals.clear();
     }
     
     return result;
@@ -75,13 +77,18 @@ BadDataResult BadDataDetector::detectBadDataChiSquare(
 BadDataResult BadDataDetector::detectBadDataLNR(
     const model::TelemetryData& telemetry,
     const model::StateVector& state,
-    const model::NetworkModel& network) {
+    const model::NetworkModel& network,
+    const std::vector<Real>* normalizedResidualsOverride) {
     
     BadDataResult result;
     result.hasBadData = false;
     
-    std::vector<Real> normalizedResiduals = computeNormalizedResiduals(
-        telemetry, state, network);
+    std::vector<Real> normalizedResiduals;
+    if (normalizedResidualsOverride && !normalizedResidualsOverride->empty()) {
+        normalizedResiduals = *normalizedResidualsOverride;
+    } else {
+        normalizedResiduals = computeNormalizedResiduals(telemetry, state, network);
+    }
     
     // Find largest normalized residual
     auto maxIt = std::max_element(normalizedResiduals.begin(), 
@@ -117,9 +124,18 @@ BadDataResult BadDataDetector::detectBadData(
     BadDataResult result = detectBadDataChiSquare(telemetry, state, network);
     
     if (result.hasBadData) {
-        // Refine using LNR
-        BadDataResult lnrResult = detectBadDataLNR(telemetry, state, network);
-        // Combine results
+        // Refine using LNR without re-evaluating measurement functions
+        BadDataResult lnrResult = detectBadDataLNR(
+            telemetry, state, network, &result.normalizedResiduals);
+        if (lnrResult.hasBadData) {
+            // Combine LNR identification details
+            result.badDeviceIds.insert(result.badDeviceIds.end(),
+                                       lnrResult.badDeviceIds.begin(),
+                                       lnrResult.badDeviceIds.end());
+            result.badMeasurementIndices.insert(result.badMeasurementIndices.end(),
+                                                lnrResult.badMeasurementIndices.begin(),
+                                                lnrResult.badMeasurementIndices.end());
+        }
     }
     
     return result;

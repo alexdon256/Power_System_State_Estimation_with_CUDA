@@ -30,11 +30,8 @@ public:
     
     // Evaluate measurement functions h(x)
     void evaluate(const model::StateVector& state, const model::NetworkModel& network,
-                  const model::TelemetryData& telemetry, std::vector<Real>& hx);
-    
-    // Evaluate on GPU
-    void evaluateGPU(const model::StateVector& state, const model::NetworkModel& network,
-                     const model::TelemetryData& telemetry, std::vector<Real>& hx);
+                  const model::TelemetryData& telemetry, std::vector<Real>& hx,
+                  bool useGPU = false);
     
     // Compute residual r = z - h(x)
     void computeResidual(const std::vector<Real>& z, const std::vector<Real>& hx,

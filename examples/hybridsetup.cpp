@@ -295,11 +295,6 @@ int main(int argc, char* argv[]) {
                 // STEP 10d: Compute Values from Robust Estimation
                 // ================================================================
                 if (robustResult.state && robustResult.converged) {
-                    bool useGPU = true;
-                    network->computeVoltEstimates(*robustResult.state, useGPU);
-                    network->computePowerInjections(*robustResult.state, useGPU);
-                    network->computePowerFlows(*robustResult.state, useGPU);
-                    
                     std::cout << "  [Values] Computed from robust estimation:\n";
                     std::cout << std::fixed << std::setprecision(4);
                     
@@ -348,11 +343,7 @@ int main(int argc, char* argv[]) {
         // Compute all final values
         if (result.state && result.converged) {
             std::cout << "\n=== Computing Final Estimated Values ===\n";
-            bool useGPU = true;
-            network->computeVoltEstimates(*result.state, useGPU);
-            network->computePowerInjections(*result.state, useGPU);
-            network->computePowerFlows(*result.state, useGPU);
-            std::cout << "✓ All values computed and stored in Bus/Branch objects\n";
+            std::cout << "✓ Final estimated values ready (solver already populated bus/branch metrics)\n";
             
             // Display summary of computed values
             std::cout << "\n=== Computed Values Summary ===\n";

@@ -233,11 +233,7 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "=== Computing Values from Robust Estimation ===\n";
         if (robustResult.state) {
-            bool useGPU = true;
-            network->computeVoltEstimates(*robustResult.state, useGPU);
-            network->computePowerInjections(*robustResult.state, useGPU);
-            network->computePowerFlows(*robustResult.state, useGPU);
-            std::cout << "✓ All values computed and stored in Bus/Branch objects\n\n";
+            std::cout << "✓ Estimated values ready (solver already populated bus/branch metrics)\n\n";
             
             // Display computed values
             std::cout << "=== Estimated Values (Robust Estimation) ===\n";

@@ -16,6 +16,8 @@
 #include <atomic>
 #include <thread>
 #include <queue>
+#include <condition_variable>
+#include <mutex>
 
 namespace sle {
 namespace interface {

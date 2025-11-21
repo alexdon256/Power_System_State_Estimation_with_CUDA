@@ -24,6 +24,7 @@ struct SLE_API BadDataResult {
     Real chiSquareStatistic;
     Real chiSquareThreshold;
     bool hasBadData;
+    std::vector<Real> normalizedResiduals;
 };
 
 class SLE_API BadDataDetector {
@@ -40,7 +41,8 @@ public:
     BadDataResult detectBadDataLNR(
         const model::TelemetryData& telemetry,
         const model::StateVector& state,
-        const model::NetworkModel& network);
+        const model::NetworkModel& network,
+        const std::vector<Real>* normalizedResidualsOverride = nullptr);
     
     // Combined detection method
     BadDataResult detectBadData(

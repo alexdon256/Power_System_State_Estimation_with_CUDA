@@ -81,12 +81,8 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     
     // Iterative solution
     for (Index iter = 0; iter < config_.maxIterations; ++iter) {
-        // Evaluate measurement functions
-        if (config_.useGPU) {
-            measFuncs_->evaluateGPU(state, network, telemetry, hx);
-        } else {
-            measFuncs_->evaluate(state, network, telemetry, hx);
-        }
+        // Evaluate measurement functions (GPU path handled inside evaluate)
+        measFuncs_->evaluate(state, network, telemetry, hx, config_.useGPU);
         
         // Compute residual r = z - h(x) (vectorized on CPU)
         measFuncs_->computeResidual(z, hx, residual);
@@ -225,7 +221,7 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     }
     
     // Compute final objective value (GPU-accelerated with memory pool)
-    measFuncs_->evaluate(state, network, telemetry, hx);
+    measFuncs_->evaluate(state, network, telemetry, hx, config_.useGPU);
     measFuncs_->computeResidual(z, hx, residual);
     
     if (config_.useGPU && memoryPool_.d_residual && memoryPool_.d_weights) {

@@ -189,10 +189,6 @@ int main(int argc, char* argv[]) {
                 
                 // Compute and extract values for monitoring
                 if (incResult.state) {
-                    bool useGPU = true;
-                    network->computeVoltEstimates(*incResult.state, useGPU);
-                    network->computePowerInjections(*incResult.state, useGPU);
-                    network->computePowerFlows(*incResult.state, useGPU);
                     
                     // Monitor voltage violations
                     auto buses = network->getBuses();
@@ -245,11 +241,7 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "=== Computing Estimated Values ===\n";
         if (result.state) {
-            bool useGPU = true;
-            network->computeVoltEstimates(*result.state, useGPU);
-            network->computePowerInjections(*result.state, useGPU);
-            network->computePowerFlows(*result.state, useGPU);
-            std::cout << "✓ All values computed and stored in Bus/Branch objects\n\n";
+            std::cout << "✓ Estimated values ready (solver already populated bus/branch metrics)\n\n";
         }
         
         // ========================================================================
