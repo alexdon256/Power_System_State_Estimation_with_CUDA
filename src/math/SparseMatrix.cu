@@ -128,13 +128,13 @@ void SparseMatrix::multiplyVector(const Real* x, Real* y, cusparseHandle_t handl
     void* dBuffer = nullptr;
     cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                             &alpha, mat, vecX, &beta, vecY,
-                            CUDA_R_64F, CUSPARSE_MV_ALG_DEFAULT, &bufferSize);
+                            CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
     if (bufferSize > 0) {
         cudaMalloc(&dBuffer, bufferSize);
     }
     cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                  &alpha, mat, vecX, &beta, vecY,
-                 CUDA_R_64F, CUSPARSE_MV_ALG_DEFAULT, dBuffer);
+                 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer);
     if (dBuffer) cudaFree(dBuffer);
     
     cusparseDestroyDnVec(vecX);
@@ -179,13 +179,13 @@ void SparseMatrix::multiplyVectorTranspose(const Real* x, Real* y, cusparseHandl
     void* dBuffer = nullptr;
     cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_TRANSPOSE,
                             &alpha, mat, vecX, &beta, vecY,
-                            CUDA_R_64F, CUSPARSE_MV_ALG_DEFAULT, &bufferSize);
+                            CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
     if (bufferSize > 0) {
         cudaMalloc(&dBuffer, bufferSize);
     }
     cusparseSpMV(handle, CUSPARSE_OPERATION_TRANSPOSE,
                  &alpha, mat, vecX, &beta, vecY,
-                 CUDA_R_64F, CUSPARSE_MV_ALG_DEFAULT, dBuffer);
+                 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer);
     if (dBuffer) cudaFree(dBuffer);
     
     cusparseDestroyDnVec(vecX);
