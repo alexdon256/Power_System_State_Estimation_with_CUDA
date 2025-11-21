@@ -172,81 +172,12 @@ void MeasurementFunctions::evaluate(const StateVector& state,
                 }
                 
                 bool forward = (branch->getFromBus() == fromBus && branch->getToBus() == toBus);
-                switch (meas->getType()) {
-                    case MeasurementType::P_FLOW:
-                        hx[i] = forward ? branch->getPFlow() : -branch->getPFlow();
-                        break;
-                    case MeasurementType::Q_FLOW:
-                        hx[i] = forward ? branch->getQFlow() : -branch->getQFlow();
-                        break;
-                    case MeasurementType::I_MAGNITUDE:
-                        hx[i] = branch->getIPU();
-                        break;
-                    default:
-                        hx[i] = 0.0;
-                        break;
-                }
-                break;
-            }
-                
-            case MeasurementType::P_FLOW: {
-                BusId fromBus = meas->getFromBus();
-                BusId toBus = meas->getToBus();
-                auto it1 = branchFlowMap.find(fromBus);
-                if (it1 != branchFlowMap.end()) {
-                    auto it2 = it1->second.find(toBus);
-                    if (it2 != it1->second.end() && it2->second < pFlow.size()) {
-                        // Get the branch to check direction
-                        auto branches = network.getBranches();
-                        if (it2->second < branches.size()) {
-                            const auto* branch = branches[it2->second];
-                            // If measurement direction matches branch direction, use flow as-is
-                            // If reversed, negate the flow
-                            if (branch->getFromBus() == fromBus && branch->getToBus() == toBus) {
-                                hx[i] = pFlow[it2->second];
-                            } else {
-                                // Reverse direction: negate flow
-                                hx[i] = -pFlow[it2->second];
-                            }
-                        } else {
-                            hx[i] = 0.0;
-                        }
-                    } else {
-                        hx[i] = 0.0;
-                    }
+                if (meas->getType() == MeasurementType::P_FLOW) {
+                    hx[i] = forward ? branch->getPFlow() : -branch->getPFlow();
+                } else if (meas->getType() == MeasurementType::Q_FLOW) {
+                    hx[i] = forward ? branch->getQFlow() : -branch->getQFlow();
                 } else {
-                    hx[i] = 0.0;
-                }
-                break;
-            }
-            
-            case MeasurementType::Q_FLOW: {
-                BusId fromBus = meas->getFromBus();
-                BusId toBus = meas->getToBus();
-                auto it1 = branchFlowMap.find(fromBus);
-                if (it1 != branchFlowMap.end()) {
-                    auto it2 = it1->second.find(toBus);
-                    if (it2 != it1->second.end() && it2->second < qFlow.size()) {
-                        // Get the branch to check direction
-                        auto branches = network.getBranches();
-                        if (it2->second < branches.size()) {
-                            const auto* branch = branches[it2->second];
-                            // If measurement direction matches branch direction, use flow as-is
-                            // If reversed, negate the flow
-                            if (branch->getFromBus() == fromBus && branch->getToBus() == toBus) {
-                                hx[i] = qFlow[it2->second];
-                            } else {
-                                // Reverse direction: negate flow
-                                hx[i] = -qFlow[it2->second];
-                            }
-                        } else {
-                            hx[i] = 0.0;
-                        }
-                    } else {
-                        hx[i] = 0.0;
-                    }
-                } else {
-                    hx[i] = 0.0;
+                    hx[i] = branch->getIPU();
                 }
                 break;
             }
