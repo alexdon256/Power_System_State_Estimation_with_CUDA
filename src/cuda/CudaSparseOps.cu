@@ -64,8 +64,11 @@ void weightedSparseMatVec(cusparseHandle_t handle,
     }
     
     // Temporary buffer for A * x
-    Real* temp;
-    cudaMalloc(&temp, nRows * sizeof(Real));
+    Real* temp = nullptr;
+    cudaError_t err = cudaMalloc(&temp, nRows * sizeof(Real));
+    if (err != cudaSuccess) {
+        return;  // Allocation failed, cannot proceed
+    }
     
     // Compute A * x using cuSPARSE
     sparseMatVec(handle, values, rowPtr, colInd, x, temp, nRows, nCols);

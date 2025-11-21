@@ -120,7 +120,10 @@ Real computeWeightedSumSquares(const Real* x, const Real* w, Index n) {
     if (gridSize == 0) return 0.0;
     
     Real* d_partial = nullptr;
-    cudaMalloc(&d_partial, gridSize * sizeof(Real));
+    cudaError_t err = cudaMalloc(&d_partial, gridSize * sizeof(Real));
+    if (err != cudaSuccess) {
+        return 0.0;  // Return 0 if allocation fails
+    }
     
     // Calculate shared memory size (one Real per warp)
     constexpr Index warpsPerBlock = (blockSize + 32 - 1) / 32;

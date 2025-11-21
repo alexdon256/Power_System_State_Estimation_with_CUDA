@@ -75,13 +75,31 @@ bool CuSOLVERIntegration::solveSparse(const SparseMatrix& A,
     x.resize(nRows);
     
     // Allocate device memory
-    Real* d_b;
-    Real* d_x;
-    cudaMalloc(&d_b, nRows * sizeof(Real));
-    cudaMalloc(&d_x, nRows * sizeof(Real));
+    Real* d_b = nullptr;
+    Real* d_x = nullptr;
+    cudaError_t err;
+    
+    err = cudaMalloc(&d_b, nRows * sizeof(Real));
+    if (err != cudaSuccess) {
+        return false;
+    }
+    
+    err = cudaMalloc(&d_x, nRows * sizeof(Real));
+    if (err != cudaSuccess) {
+        // Free previously allocated memory
+        if (d_b) {
+            cudaFree(d_b);
+        }
+        return false;
+    }
     
     // Copy right-hand side to device
-    cudaMemcpy(d_b, b.data(), nRows * sizeof(Real), cudaMemcpyHostToDevice);
+    err = cudaMemcpy(d_b, b.data(), nRows * sizeof(Real), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+        cudaFree(d_b);
+        cudaFree(d_x);
+        return false;
+    }
     
     // Solve using cuSOLVER QR factorization
     cusolverSpHandle_t handle = cusolverHandle_;
@@ -104,7 +122,12 @@ bool CuSOLVERIntegration::solveSparse(const SparseMatrix& A,
     }
     
     // Copy result back
-    cudaMemcpy(x.data(), d_x, nRows * sizeof(Real), cudaMemcpyDeviceToHost);
+    err = cudaMemcpy(x.data(), d_x, nRows * sizeof(Real), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        cudaFree(d_b);
+        cudaFree(d_x);
+        return false;
+    }
     
     cudaFree(d_b);
     cudaFree(d_x);

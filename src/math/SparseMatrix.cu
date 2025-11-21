@@ -22,12 +22,34 @@ SparseMatrix::~SparseMatrix() {
 }
 
 void SparseMatrix::allocateDeviceMemory() {
+    cudaError_t err;
+    
     if (nnz_ > 0) {
-        cudaMalloc(&d_values_, nnz_ * sizeof(Real));
-        cudaMalloc(&d_colInd_, nnz_ * sizeof(Index));
+        err = cudaMalloc(&d_values_, nnz_ * sizeof(Real));
+        if (err != cudaSuccess) {
+            d_values_ = nullptr;
+            throw std::runtime_error("Failed to allocate device memory for sparse matrix values");
+        }
+        
+        err = cudaMalloc(&d_colInd_, nnz_ * sizeof(Index));
+        if (err != cudaSuccess) {
+            // Free previously allocated memory
+            if (d_values_) {
+                cudaFree(d_values_);
+                d_values_ = nullptr;
+            }
+            d_colInd_ = nullptr;
+            throw std::runtime_error("Failed to allocate device memory for sparse matrix column indices");
+        }
     }
+    
     if (nRows_ > 0) {
-        cudaMalloc(&d_rowPtr_, (nRows_ + 1) * sizeof(Index));
+        err = cudaMalloc(&d_rowPtr_, (nRows_ + 1) * sizeof(Index));
+        if (err != cudaSuccess) {
+            // Free previously allocated memory
+            freeDeviceMemory();
+            throw std::runtime_error("Failed to allocate device memory for sparse matrix row pointers");
+        }
     }
 }
 
