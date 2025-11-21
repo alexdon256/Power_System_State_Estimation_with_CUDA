@@ -262,8 +262,8 @@ int main(int argc, char* argv[]) {
             for (auto* bus : buses) {
                 if (bus) {
                     std::cout << std::setw(6) << bus->getId() << " | "
-                              << std::setw(9) << bus->getPMW() << " | "
-                              << std::setw(9) << bus->getQMVAR() << "\n";
+                              << std::setw(9) << bus->getPInjectionMW() << " | "
+                              << std::setw(9) << bus->getQInjectionMVAR() << "\n";
                 }
             }
             

@@ -97,7 +97,7 @@ private:
             cudaError_t err;
             if (residualSize < nMeas) {
                 if (d_residual) cudaFree(d_residual);
-                err = cudaMalloc(&d_residual, nMeas * sizeof(Real));
+                err = cudaMalloc(reinterpret_cast<void**>(&d_residual), nMeas * sizeof(Real));
                 if (err != cudaSuccess) {
                     d_residual = nullptr;
                     residualSize = 0;
@@ -107,7 +107,7 @@ private:
             }
             if (weightsSize < nMeas) {
                 if (d_weights) cudaFree(d_weights);
-                err = cudaMalloc(&d_weights, nMeas * sizeof(Real));
+                err = cudaMalloc(reinterpret_cast<void**>(&d_weights), nMeas * sizeof(Real));
                 if (err != cudaSuccess) {
                     d_weights = nullptr;
                     weightsSize = 0;
@@ -117,7 +117,7 @@ private:
             }
             if (weightedResidualSize < nMeas) {
                 if (d_weightedResidual) cudaFree(d_weightedResidual);
-                err = cudaMalloc(&d_weightedResidual, nMeas * sizeof(Real));
+                err = cudaMalloc(reinterpret_cast<void**>(&d_weightedResidual), nMeas * sizeof(Real));
                 if (err != cudaSuccess) {
                     d_weightedResidual = nullptr;
                     weightedResidualSize = 0;
@@ -127,7 +127,7 @@ private:
             }
             if (rhsSize < nStates) {
                 if (d_rhs) cudaFree(d_rhs);
-                err = cudaMalloc(&d_rhs, nStates * sizeof(Real));
+                err = cudaMalloc(reinterpret_cast<void**>(&d_rhs), nStates * sizeof(Real));
                 if (err != cudaSuccess) {
                     d_rhs = nullptr;
                     rhsSize = 0;

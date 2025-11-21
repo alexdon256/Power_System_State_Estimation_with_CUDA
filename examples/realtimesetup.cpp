@@ -44,6 +44,7 @@
 #include <sle/baddata/BadDataDetector.h>
 #include <sle/baddata/DataConsistencyChecker.h>
 #include <sle/Types.h>
+#include <sle/model/Bus.h>
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -52,6 +53,8 @@
 #include <vector>
 #include <cmath>
 #include <fstream>
+
+using sle::Real;
 
 int main(int argc, char* argv[]) {
     try {

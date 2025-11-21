@@ -31,12 +31,15 @@
 #include <sle/baddata/BadDataDetector.h>
 #include <sle/baddata/DataConsistencyChecker.h>
 #include <sle/Types.h>
+#include <sle/model/Bus.h>
 #include <iostream>
 #include <iomanip>
 #include <fstream>
 #include <chrono>
 #include <algorithm>
 #include <cmath>
+
+using sle::Real;
 
 int main(int argc, char* argv[]) {
     try {
@@ -178,10 +181,10 @@ int main(int argc, char* argv[]) {
         auto branches = network->getBranches();
         for (auto* branch : branches) {
             if (!branch) continue;
-                sle::Real pMW = branch->getPMW();
-                sle::Real qMVAR = branch->getQMVAR();
-                sle::Real sFlow = std::sqrt(pMW * pMW + qMVAR * qMVAR);
-                sle::Real rating = branch->getRating();
+            Real pMW = branch->getPMW();
+            Real qMVAR = branch->getQMVAR();
+            Real sFlow = std::sqrt(pMW * pMW + qMVAR * qMVAR);
+            Real rating = branch->getRating();
             
             if (rating > 0 && sFlow > rating * 0.9) {
                 overloads++;
