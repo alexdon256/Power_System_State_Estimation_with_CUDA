@@ -191,9 +191,11 @@ jobs:
     - name: Configure CMake
       shell: pwsh
       env:
-        # Set CUDA flags as environment variable (backup method)
+        # Set CUDA flags as environment variables (multiple methods for compatibility)
         CMAKE_CUDA_FLAGS: "-allow-unsupported-compiler"
         CMAKE_CUDA_FLAGS_INIT: "-allow-unsupported-compiler"
+        # CUDA_NVCC_FLAGS is read directly by nvcc during compiler identification
+        CUDA_NVCC_FLAGS: "-allow-unsupported-compiler"
       run: |
         $buildDir = "build-${{ matrix.config.name }}"
         New-Item -ItemType Directory -Force -Path $buildDir
