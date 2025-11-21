@@ -77,8 +77,11 @@ bool PMUParser::parseDataFrame(const uint8_t* buffer, size_t length, PMUFrame& f
             offset += 4;
             
             // Use memcpy to avoid strict aliasing violation
-            Real magnitude;
-            std::memcpy(&magnitude, &magInt, sizeof(Real));
+            // magInt is uint32_t (4 bytes) representing IEEE 754 float
+            // Convert to float first, then to Real (double)
+            float magFloat;
+            std::memcpy(&magFloat, &magInt, sizeof(uint32_t));
+            Real magnitude = static_cast<Real>(magFloat);
             Real angle = *reinterpret_cast<const int32_t*>(&angleInt) * 1e-7;  // Convert to radians
             angle = angle * M_PI / 180.0;  // Convert from degrees to radians
             
@@ -113,8 +116,11 @@ bool PMUParser::parseDataFrame(const uint8_t* buffer, size_t length, PMUFrame& f
                           (buffer[offset + 2] << 8) | buffer[offset + 3];
         offset += 4;
         // Use memcpy to avoid strict aliasing violation
-        Real freq;
-        std::memcpy(&freq, &freqInt, sizeof(Real));
+        // freqInt is uint32_t (4 bytes) representing IEEE 754 float
+        // Convert to float first, then to Real (double)
+        float freqFloat;
+        std::memcpy(&freqFloat, &freqInt, sizeof(uint32_t));
+        Real freq = static_cast<Real>(freqFloat);
         frame.frequencies.push_back(freq);
     }
     
@@ -125,8 +131,11 @@ bool PMUParser::parseDataFrame(const uint8_t* buffer, size_t length, PMUFrame& f
                            (buffer[offset + 2] << 8) | buffer[offset + 3];
         offset += 4;
         // Use memcpy to avoid strict aliasing violation
-        Real dfreq;
-        std::memcpy(&dfreq, &dfreqInt, sizeof(Real));
+        // dfreqInt is uint32_t (4 bytes) representing IEEE 754 float
+        // Convert to float first, then to Real (double)
+        float dfreqFloat;
+        std::memcpy(&dfreqFloat, &dfreqInt, sizeof(uint32_t));
+        Real dfreq = static_cast<Real>(dfreqFloat);
         frame.dfreq.push_back(dfreq);
     }
     

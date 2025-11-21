@@ -8,7 +8,6 @@
 #include <sle/model/NetworkModel.h>
 #include <sle/model/StateVector.h>
 #include <sle/model/TelemetryData.h>
-#include <sle/cuda/CudaJacobianKernels.cu>
 #include <algorithm>
 
 namespace sle {

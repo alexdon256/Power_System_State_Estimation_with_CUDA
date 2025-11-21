@@ -132,6 +132,7 @@ void ObservabilityAnalyzer::buildObservabilityGraph(
     const model::NetworkModel& network,
     const model::TelemetryData& telemetry,
     std::vector<std::vector<Index>>& graph) {
+    (void)telemetry;  // May be used in future implementation
     
     // Build graph based on branches and measurements
     auto branches = network.getBranches();

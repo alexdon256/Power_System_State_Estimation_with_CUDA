@@ -99,7 +99,7 @@ BadDataResult BadDataDetector::detectBadDataLNR(
             result.badMeasurementIndices.push_back(maxIdx);
             
             const auto& measurements = telemetry.getMeasurements();
-            if (maxIdx < measurements.size()) {
+            if (maxIdx >= 0 && static_cast<size_t>(maxIdx) < measurements.size()) {
                 result.badDeviceIds.push_back(measurements[maxIdx]->getDeviceId());
             }
         }

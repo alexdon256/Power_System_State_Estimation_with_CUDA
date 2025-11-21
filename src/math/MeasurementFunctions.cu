@@ -78,7 +78,7 @@ void MeasurementFunctions::evaluate(const StateVector& state,
     
     // Parallel evaluation - each measurement is independent (CPU fallback only)
     // Thread-safe: read-only access to network, state, and measurements
-    #ifdef USE_OPENMP
+    #if defined(USE_OPENMP) && !defined(__CUDACC__)
     #pragma omp parallel for schedule(static)
     #endif
     for (size_t i = 0; i < nMeas; ++i) {
@@ -144,9 +144,9 @@ void MeasurementFunctions::computeResidual(const std::vector<Real>& z,
     residual.resize(n);
     
     // Parallel vectorized subtraction (combines multi-threading with SIMD)
-    #ifdef USE_OPENMP
+    #if defined(USE_OPENMP) && !defined(__CUDACC__)
     #pragma omp parallel for simd schedule(static)
-    #else
+    #elif !defined(__CUDACC__)
     #pragma omp simd
     #endif
     for (size_t i = 0; i < n; ++i) {
