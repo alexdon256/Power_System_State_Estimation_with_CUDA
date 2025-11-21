@@ -235,6 +235,23 @@ std::vector<Branch*> NetworkModel::getBranchesFromBus(BusId busId) {
     return result;
 }
 
+std::vector<const Branch*> NetworkModel::getBranchesFromBus(BusId busId) const {
+    const_cast<NetworkModel*>(this)->updateAdjacencyLists();
+    Index busIdx = getBusIndex(busId);
+    if (busIdx < 0 || static_cast<size_t>(busIdx) >= branchesFromBus_.size()) {
+        return {};
+    }
+    
+    std::vector<const Branch*> result;
+    result.reserve(branchesFromBus_[busIdx].size());
+    for (Index brIdx : branchesFromBus_[busIdx]) {
+        if (static_cast<size_t>(brIdx) < branches_.size()) {
+            result.push_back(branches_[brIdx].get());
+        }
+    }
+    return result;
+}
+
 std::vector<Branch*> NetworkModel::getBranchesToBus(BusId busId) {
     updateAdjacencyLists();
     Index busIdx = getBusIndex(busId);
@@ -243,6 +260,23 @@ std::vector<Branch*> NetworkModel::getBranchesToBus(BusId busId) {
     }
     
     std::vector<Branch*> result;
+    result.reserve(branchesToBus_[busIdx].size());
+    for (Index brIdx : branchesToBus_[busIdx]) {
+        if (static_cast<size_t>(brIdx) < branches_.size()) {
+            result.push_back(branches_[brIdx].get());
+        }
+    }
+    return result;
+}
+
+std::vector<const Branch*> NetworkModel::getBranchesToBus(BusId busId) const {
+    const_cast<NetworkModel*>(this)->updateAdjacencyLists();
+    Index busIdx = getBusIndex(busId);
+    if (busIdx < 0 || static_cast<size_t>(busIdx) >= branchesToBus_.size()) {
+        return {};
+    }
+    
+    std::vector<const Branch*> result;
     result.reserve(branchesToBus_[busIdx].size());
     for (Index brIdx : branchesToBus_[busIdx]) {
         if (static_cast<size_t>(brIdx) < branches_.size()) {

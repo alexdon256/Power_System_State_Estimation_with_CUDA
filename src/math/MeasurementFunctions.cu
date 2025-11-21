@@ -77,7 +77,6 @@ void MeasurementFunctions::evaluate(const StateVector& state,
     hx.reserve(nMeas);
     hx.resize(nMeas);
     
-    const auto& angles = state.getAngles();
     const auto& magnitudes = state.getMagnitudes();
     
     // Determine which computed quantities are required
@@ -105,10 +104,10 @@ void MeasurementFunctions::evaluate(const StateVector& state,
     }
     
     // Build lookup map for quick branch access (fromBus,toBus)->branch pointer
-    std::unordered_map<BusId, std::unordered_map<BusId, const Branch*>> branchLookup;
+    std::unordered_map<BusId, std::unordered_map<BusId, const model::Branch*>> branchLookup;
     if (needFlows) {
-        auto branches = network.getBranches();
-        for (const auto* branch : branches) {
+        auto branchList = network.getBranches();
+        for (const auto* branch : branchList) {
             if (!branch) continue;
             branchLookup[branch->getFromBus()][branch->getToBus()] = branch;
             branchLookup[branch->getToBus()][branch->getFromBus()] = branch;
@@ -157,33 +156,35 @@ void MeasurementFunctions::evaluate(const StateVector& state,
             case MeasurementType::Q_FLOW: {
                 BusId fromBus = meas->getFromBus();
                 BusId toBus = meas->getToBus();
-                auto it1 = branchLookup.find(fromBus);
-                if (it1 != branchLookup.end()) {
-                    auto it2 = it1->second.find(toBus);
-                    if (it2 != it1->second.end() && it2->second) {
-                        const Branch* branch = it2->second;
-                        switch (meas->getType()) {
-                            case MeasurementType::P_FLOW:
-                                hx[i] = (branch->getFromBus() == fromBus && branch->getToBus() == toBus)
-                                        ? branch->getPFlow()
-                                        : -branch->getPFlow();
-                                break;
-                            case MeasurementType::Q_FLOW:
-                                hx[i] = (branch->getFromBus() == fromBus && branch->getToBus() == toBus)
-                                        ? branch->getQFlow()
-                                        : -branch->getQFlow();
-                                break;
-                            case MeasurementType::I_MAGNITUDE:
-                                hx[i] = branch->getIPU();
-                                break;
-                            default:
-                                hx[i] = 0.0;
-                        }
-                    } else {
-                        hx[i] = 0.0;
+                const model::Branch* branch = nullptr;
+                
+                auto itFrom = branchLookup.find(fromBus);
+                if (itFrom != branchLookup.end()) {
+                    auto itTo = itFrom->second.find(toBus);
+                    if (itTo != itFrom->second.end()) {
+                        branch = itTo->second;
                     }
-                } else {
+                }
+                
+                if (!branch) {
                     hx[i] = 0.0;
+                    break;
+                }
+                
+                bool forward = (branch->getFromBus() == fromBus && branch->getToBus() == toBus);
+                switch (meas->getType()) {
+                    case MeasurementType::P_FLOW:
+                        hx[i] = forward ? branch->getPFlow() : -branch->getPFlow();
+                        break;
+                    case MeasurementType::Q_FLOW:
+                        hx[i] = forward ? branch->getQFlow() : -branch->getQFlow();
+                        break;
+                    case MeasurementType::I_MAGNITUDE:
+                        hx[i] = branch->getIPU();
+                        break;
+                    default:
+                        hx[i] = 0.0;
+                        break;
                 }
                 break;
             }

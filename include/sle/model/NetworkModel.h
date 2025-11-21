@@ -55,6 +55,8 @@ public:
     // Get branches connected to a bus
     std::vector<Branch*> getBranchesFromBus(BusId busId);
     std::vector<Branch*> getBranchesToBus(BusId busId);
+    std::vector<const Branch*> getBranchesFromBus(BusId busId) const;
+    std::vector<const Branch*> getBranchesToBus(BusId busId) const;
     
     // Base values
     void setBaseMVA(Real baseMVA) { baseMVA_ = baseMVA; }
