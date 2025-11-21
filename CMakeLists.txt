@@ -52,8 +52,18 @@ enable_language(CUDA)
 find_package(CUDAToolkit REQUIRED)
 
 # Set CUDA architecture (user can override with -DCUDA_ARCH)
+# CMake 3.18+ expects just the compute capability number (e.g., "75") not "sm_75"
+# If user provides "sm_XX", extract just the number
 if(NOT DEFINED CUDA_ARCH)
-    set(CUDA_ARCH "sm_75" CACHE STRING "CUDA architecture")
+    set(CUDA_ARCH "75" CACHE STRING "CUDA architecture (compute capability number, e.g., 75 for sm_75)")
+endif()
+
+# Extract compute capability number if user provided "sm_XX" format
+string(REGEX MATCH "^sm_([0-9]+)$" _match "${CUDA_ARCH}")
+if(_match)
+    # User provided "sm_XX" format, extract just the number
+    string(REGEX REPLACE "^sm_([0-9]+)$" "\\1" CUDA_ARCH_NUM "${CUDA_ARCH}")
+    set(CUDA_ARCH "${CUDA_ARCH_NUM}" CACHE STRING "CUDA architecture (compute capability number)" FORCE)
 endif()
 
 set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH})

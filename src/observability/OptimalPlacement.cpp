@@ -17,7 +17,7 @@ OptimalPlacement::OptimalPlacement() {
 }
 
 std::vector<MeasurementPlacement> OptimalPlacement::findOptimalPlacement(
-    const NetworkModel& network,
+    const model::NetworkModel& network,
     const std::set<BusId>& existingMeasurements,
     size_t maxMeasurements,
     Real budget) {
@@ -31,7 +31,7 @@ std::vector<MeasurementPlacement> OptimalPlacement::findOptimalPlacement(
 }
 
 std::vector<MeasurementPlacement> OptimalPlacement::greedyPlacement(
-    const NetworkModel& network,
+    const model::NetworkModel& network,
     const std::set<BusId>& existingMeasurements,
     size_t maxMeasurements) {
     
@@ -83,7 +83,7 @@ std::vector<MeasurementPlacement> OptimalPlacement::greedyPlacement(
 }
 
 std::vector<MeasurementPlacement> OptimalPlacement::integerProgrammingPlacement(
-    const NetworkModel& network,
+    const model::NetworkModel& network,
     const std::set<BusId>& existingMeasurements,
     size_t maxMeasurements,
     Real budget) {
@@ -109,7 +109,7 @@ std::vector<MeasurementPlacement> OptimalPlacement::integerProgrammingPlacement(
 }
 
 std::set<BusId> OptimalPlacement::identifyCriticalMeasurements(
-    const NetworkModel& network,
+    const model::NetworkModel& network,
     const std::set<BusId>& measurements) {
     
     std::set<BusId> critical;
@@ -128,7 +128,7 @@ std::set<BusId> OptimalPlacement::identifyCriticalMeasurements(
 }
 
 Real OptimalPlacement::computeObservabilityGain(
-    const NetworkModel& network,
+    const model::NetworkModel& network,
     const std::set<BusId>& currentMeasurements,
     BusId candidateBus,
     MeasurementType type) {
@@ -148,7 +148,7 @@ Real OptimalPlacement::computeObservabilityGain(
 }
 
 bool OptimalPlacement::isObservableWithMeasurements(
-    const NetworkModel& network,
+    const model::NetworkModel& network,
     const std::set<BusId>& measurements) {
     
     // Build observability matrix
@@ -173,7 +173,7 @@ bool OptimalPlacement::isObservableWithMeasurements(
 }
 
 void OptimalPlacement::buildObservabilityMatrix(
-    const NetworkModel& network,
+    const model::NetworkModel& network,
     const std::set<BusId>& measurements,
     std::vector<std::vector<bool>>& obsMatrix) {
     

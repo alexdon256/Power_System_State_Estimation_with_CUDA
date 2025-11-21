@@ -78,7 +78,8 @@ MultiAreaEstimator::MultiAreaResult MultiAreaEstimator::estimateDistributed(
     
     // Initial estimation
     auto initialResult = estimateHierarchical();
-    result.areaResults = initialResult.areaResults;
+    // Move results instead of copying (StateEstimationResult contains unique_ptr)
+    result.areaResults = std::move(initialResult.areaResults);
     
     // Iterative coordination
     for (int coordIter = 0; coordIter < maxCoordinationIterations; ++coordIter) {
@@ -165,6 +166,8 @@ void MultiAreaEstimator::coordinateTieLineFlows() {
 void MultiAreaEstimator::updateBoundaryConditions(
     const std::string& areaName,
     const model::StateVector& neighborState) {
+    (void)areaName;  // May be used in future implementation
+    (void)neighborState;  // May be used in future implementation
     
     // Update boundary bus voltages/angles based on neighbor state
     // This would update the area's network model with boundary conditions
