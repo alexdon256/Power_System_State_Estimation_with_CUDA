@@ -9,10 +9,17 @@
 
 #include <sle/Types.h>
 #include <sle/math/SparseMatrix.h>
-#include <cusolverSp.h>
-#include <cusparse.h>
 #include <vector>
 #include <memory>
+
+#ifdef USE_CUDA
+#include <cusolverSp.h>
+#include <cusparse.h>
+#else
+using cusolverSpHandle_t = void*;
+using cusparseHandle_t = void*;
+using cusparseMatDescr_t = void*;
+#endif
 
 namespace sle {
 namespace math {
