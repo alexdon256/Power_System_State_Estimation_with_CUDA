@@ -26,6 +26,10 @@ LoadFlow::LoadFlow() {
 LoadFlow::LoadFlow(const LoadFlowConfig& config) : config_(config) {
 }
 
+using model::NetworkModel;
+using model::StateVector;
+using model::Bus;
+
 LoadFlowResult LoadFlow::solve(const NetworkModel& network) {
     return solve(network, StateVector());
 }
