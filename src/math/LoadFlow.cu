@@ -63,7 +63,7 @@ LoadFlowResult LoadFlow::solveNewtonRaphson(const NetworkModel* network,
     
     for (Index iter = 0; iter < config_.maxIterations; ++iter) {
         // Compute power mismatches
-        computeMismatches(network, state, pMismatch, qMismatch);
+        computeMismatches(net, state, pMismatch, qMismatch);
         
         // Check convergence
         Real maxMismatch = 0.0;
