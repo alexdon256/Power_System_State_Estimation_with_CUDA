@@ -98,10 +98,18 @@ bool TelemetryData::removeMeasurement(const std::string& deviceId) {
     
     size_t idx = it->second;
     
-    
     // Remove measurement
     measurements_.erase(measurements_.begin() + idx);
     deviceIdIndex_.erase(it);
+    
+    // Update indices for all measurements after the removed one (indices shifted down by 1)
+    for (size_t i = idx; i < measurements_.size(); ++i) {
+        const std::string& deviceId = measurements_[i]->getDeviceId();
+        if (!deviceId.empty()) {
+            deviceIdIndex_[deviceId] = i;
+        }
+    }
+    
     return true;
 }
 

@@ -404,6 +404,18 @@ void NetworkModel::removeBus(BusId id) {
         buses_.erase(buses_.begin() + idx);
         busIndexMap_.erase(it);
         
+        // Update indices for all buses after the removed one (indices shifted down by 1)
+        for (size_t i = idx; i < buses_.size(); ++i) {
+            BusId busId = buses_[i]->getId();
+            busIndexMap_[busId] = static_cast<Index>(i);
+            
+            // Update name map if bus has a name
+            const std::string& name = buses_[i]->getName();
+            if (!name.empty()) {
+                busNameMap_[name] = static_cast<Index>(i);
+            }
+        }
+        
         invalidateCaches();
     }
 }
@@ -414,6 +426,12 @@ void NetworkModel::removeBranch(BranchId id) {
         Index idx = it->second;
         branches_.erase(branches_.begin() + idx);
         branchIndexMap_.erase(it);
+        
+        // Update indices for all branches after the removed one (indices shifted down by 1)
+        for (size_t i = idx; i < branches_.size(); ++i) {
+            BranchId branchId = branches_[i]->getId();
+            branchIndexMap_[branchId] = static_cast<Index>(i);
+        }
         
         invalidateCaches();
     }
