@@ -7,33 +7,7 @@
 #include <cuda_runtime.h>
 #include <sle/math/SparseMatrix.h>
 #include <stdexcept>
-
-// Include cuSPARSE header after our header to ensure proper visibility
-// The header already includes cusparse.h, but we include it again here
-// to ensure cusparseDcsrmv is visible during compilation
 #include <cusparse.h>
-
-// Explicitly declare cusparseDcsrmv if not available (for older CUDA versions)
-// This function is available in cuSPARSE v2.0+ (CUDA 5.0+)
-#if defined(__CUDACC__) && !defined(CUSPARSE_DEPRECATED)
-// Function should be available from cusparse.h
-#else
-// For non-CUDA compilation or if function is not found, declare it
-extern "C" {
-cusparseStatus_t cusparseDcsrmv(
-    cusparseHandle_t handle,
-    cusparseOperation_t transA,
-    int m, int n, int nnz,
-    const double* alpha,
-    const cusparseMatDescr_t descrA,
-    const double* csrValA,
-    const int* csrRowPtrA,
-    const int* csrColIndA,
-    const double* x,
-    const double* beta,
-    double* y);
-}
-#endif
 
 namespace sle {
 namespace math {
@@ -139,6 +113,34 @@ void SparseMatrix::multiplyVector(const Real* x, Real* y, cusparseHandle_t handl
     const Real alpha = 1.0;
     const Real beta = 0.0;
     
+#if CUSPARSE_VERSION >= 11000
+    cusparseSpMatDescr_t mat;
+    cusparseDnVecDescr_t vecX, vecY;
+    cusparseCreateCsr(&mat,
+                      nRows_, nCols_, nnz_,
+                      d_rowPtr_, d_colInd_, d_values_,
+                      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+    cusparseCreateDnVec(&vecX, nCols_, const_cast<Real*>(x), CUDA_R_64F);
+    cusparseCreateDnVec(&vecY, nRows_, y, CUDA_R_64F);
+    
+    size_t bufferSize = 0;
+    void* dBuffer = nullptr;
+    cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                            &alpha, mat, vecX, &beta, vecY,
+                            CUDA_R_64F, CUSPARSE_MV_ALG_DEFAULT, &bufferSize);
+    if (bufferSize > 0) {
+        cudaMalloc(&dBuffer, bufferSize);
+    }
+    cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                 &alpha, mat, vecX, &beta, vecY,
+                 CUDA_R_64F, CUSPARSE_MV_ALG_DEFAULT, dBuffer);
+    if (dBuffer) cudaFree(dBuffer);
+    
+    cusparseDestroyDnVec(vecX);
+    cusparseDestroyDnVec(vecY);
+    cusparseDestroySpMat(mat);
+#else
     cusparseMatDescr_t descr;
     cusparseCreateMatDescr(&descr);
     cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL);
@@ -151,6 +153,7 @@ void SparseMatrix::multiplyVector(const Real* x, Real* y, cusparseHandle_t handl
                    x, &beta, y);
     
     cusparseDestroyMatDescr(descr);
+#endif
 }
 
 void SparseMatrix::multiplyVectorTranspose(const Real* x, Real* y, cusparseHandle_t handle) const {
@@ -161,6 +164,34 @@ void SparseMatrix::multiplyVectorTranspose(const Real* x, Real* y, cusparseHandl
     const Real alpha = 1.0;
     const Real beta = 0.0;
     
+#if CUSPARSE_VERSION >= 11000
+    cusparseSpMatDescr_t mat;
+    cusparseDnVecDescr_t vecX, vecY;
+    cusparseCreateCsr(&mat,
+                      nRows_, nCols_, nnz_,
+                      d_rowPtr_, d_colInd_, d_values_,
+                      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+    cusparseCreateDnVec(&vecX, nRows_, const_cast<Real*>(x), CUDA_R_64F);
+    cusparseCreateDnVec(&vecY, nCols_, y, CUDA_R_64F);
+    
+    size_t bufferSize = 0;
+    void* dBuffer = nullptr;
+    cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_TRANSPOSE,
+                            &alpha, mat, vecX, &beta, vecY,
+                            CUDA_R_64F, CUSPARSE_MV_ALG_DEFAULT, &bufferSize);
+    if (bufferSize > 0) {
+        cudaMalloc(&dBuffer, bufferSize);
+    }
+    cusparseSpMV(handle, CUSPARSE_OPERATION_TRANSPOSE,
+                 &alpha, mat, vecX, &beta, vecY,
+                 CUDA_R_64F, CUSPARSE_MV_ALG_DEFAULT, dBuffer);
+    if (dBuffer) cudaFree(dBuffer);
+    
+    cusparseDestroyDnVec(vecX);
+    cusparseDestroyDnVec(vecY);
+    cusparseDestroySpMat(mat);
+#else
     cusparseMatDescr_t descr;
     cusparseCreateMatDescr(&descr);
     cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL);
@@ -173,6 +204,7 @@ void SparseMatrix::multiplyVectorTranspose(const Real* x, Real* y, cusparseHandl
                    x, &beta, y);
     
     cusparseDestroyMatDescr(descr);
+#endif
 }
 
 void SparseMatrix::clear() {
