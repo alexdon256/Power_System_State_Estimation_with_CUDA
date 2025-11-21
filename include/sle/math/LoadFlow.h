@@ -55,7 +55,7 @@ private:
     LoadFlowConfig config_;
     
     // Newton-Raphson load flow
-    LoadFlowResult solveNewtonRaphson(const model::NetworkModel& network, const model::StateVector* initialState);
+    LoadFlowResult solveNewtonRaphson(const model::NetworkModel* network, const model::StateVector* initialState);
     
     // Fast decoupled load flow
     LoadFlowResult solveFastDecoupled(const model::NetworkModel* network, const model::StateVector* initialState);

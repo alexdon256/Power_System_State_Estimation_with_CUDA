@@ -38,23 +38,24 @@ LoadFlowResult LoadFlow::solve(const NetworkModel& network, const StateVector& i
     if (config_.useFastDecoupled) {
         return solveFastDecoupled(&network, &initialState);
     } else {
-        return solveNewtonRaphson(network, &initialState);
+        return solveNewtonRaphson(&network, &initialState);
     }
 }
 
-LoadFlowResult LoadFlow::solveNewtonRaphson(const NetworkModel& network,
+LoadFlowResult LoadFlow::solveNewtonRaphson(const NetworkModel* network,
                                            const StateVector* initialState) {
     LoadFlowResult result;
     result.converged = false;
     result.iterations = 0;
     
-    size_t nBuses = network.getBusCount();
+    const auto& net = *network;
+    size_t nBuses = net.getBusCount();
     StateVector state(nBuses);
     
     if (initialState && initialState->size() == nBuses) {
         state = *initialState;
     } else {
-        state.initializeFromNetwork(network);
+        state.initializeFromNetwork(net);
     }
     
     std::vector<Real> pMismatch(nBuses);
@@ -86,7 +87,7 @@ LoadFlowResult LoadFlow::solveNewtonRaphson(const NetworkModel& network,
         // Build Jacobian and solve for state update
         std::vector<Complex> J;
         std::vector<Index> rowPtr, colInd;
-        buildPowerFlowJacobian(network, state, J, rowPtr, colInd);
+        buildPowerFlowJacobian(net, state, J, rowPtr, colInd);
         
         // Solve linear system (simplified - would use cuSOLVER)
         // For now, use simplified update
@@ -95,7 +96,7 @@ LoadFlowResult LoadFlow::solveNewtonRaphson(const NetworkModel& network,
         
         for (size_t i = 0; i < nBuses; ++i) {
             // Get bus by index (simplified - would use proper bus ID mapping)
-            auto buses = network.getBuses();
+        auto buses = net.getBuses();
             if (i < buses.size()) {
                 auto* bus = buses[i];
                 if (bus && bus->getType() != BusType::Slack) {
