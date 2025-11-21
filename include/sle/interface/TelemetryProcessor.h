@@ -13,11 +13,7 @@
 #include <sle/Types.h>
 #include <string>
 #include <memory>
-#include <atomic>
-#include <thread>
-#include <queue>
-#include <condition_variable>
-#include <mutex>
+#include <vector>
 
 namespace sle {
 namespace interface {
@@ -50,30 +46,13 @@ public:
     // Batch updates
     void updateMeasurements(const std::vector<TelemetryUpdate>& updates);
     
-    // Process updates from queue (for async processing)
-    void processUpdateQueue();
-    
-    // Start/stop real-time processing thread
-    void startRealTimeProcessing();
-    void stopRealTimeProcessing();
-    
-    // Check if updates are pending
-    bool hasPendingUpdates() const;
-    
     // Get latest timestamp
-    int64_t getLatestTimestamp() const { return latestTimestamp_.load(); }
+    int64_t getLatestTimestamp() const { return latestTimestamp_; }
     
 private:
     model::TelemetryData* telemetry_;
+    int64_t latestTimestamp_;
     
-    std::queue<TelemetryUpdate> updateQueue_;
-    std::condition_variable queueCondition_;
-    
-    std::atomic<bool> running_;
-    std::thread processingThread_;
-    std::atomic<int64_t> latestTimestamp_;
-    
-    void processingLoop();
     void applyUpdate(const TelemetryUpdate& update);
 };
 

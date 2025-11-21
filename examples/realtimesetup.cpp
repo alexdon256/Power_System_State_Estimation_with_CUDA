@@ -67,11 +67,12 @@ int main(int argc, char* argv[]) {
         std::string measurementFile = (argc > 2) ? argv[2] : "examples/ieee14/measurements.csv";
         
         std::cout << "Loading network model from: " << networkFile << "\n";
-        auto network = sle::interface::ModelLoader::loadFromIEEE(networkFile);
-        if (!network) {
+        auto networkUnique = sle::interface::ModelLoader::loadFromIEEE(networkFile);
+        if (!networkUnique) {
             std::cerr << "ERROR: Failed to load network model\n";
             return 1;
         }
+        auto network = std::shared_ptr<sle::model::NetworkModel>(std::move(networkUnique));
         std::cout << "  - Loaded " << network->getBusCount() << " buses, " 
                   << network->getBranchCount() << " branches\n";
         
@@ -83,6 +84,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         std::cout << "  - Loaded " << telemetry->getMeasurementCount() << " measurements\n\n";
+        auto telemetryShared = std::shared_ptr<sle::model::TelemetryData>(std::move(telemetry));
         
         // ========================================================================
         // STEP 2: Pre-Estimation Validation
@@ -91,7 +93,7 @@ int main(int argc, char* argv[]) {
         
         // Data consistency check
         sle::baddata::DataConsistencyChecker consistencyChecker;
-        auto consistency = consistencyChecker.checkConsistency(*telemetry, *network);
+        auto consistency = consistencyChecker.checkConsistency(*telemetryShared, *network);
         if (!consistency.isConsistent) {
             std::cout << "⚠ Data consistency issues found:\n";
             for (const auto& issue : consistency.inconsistencies) {
@@ -108,9 +110,8 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "=== Configuring Estimator ===\n";
         sle::interface::StateEstimator estimator;
-        // NetworkModel is non-copyable, so convert unique_ptr to shared_ptr
-        estimator.setNetwork(std::shared_ptr<sle::model::NetworkModel>(network.release()));
-        estimator.setTelemetryData(telemetry);
+        estimator.setNetwork(network);
+        estimator.setTelemetryData(telemetryShared);
         
         // Real-time mode: Fast, relaxed tolerance
         estimator.configureForRealTime(1e-5, 15, true);  // tolerance, maxIter, useGPU
@@ -120,13 +121,10 @@ int main(int argc, char* argv[]) {
         std::cout << "  - GPU acceleration: Enabled\n\n";
         
         // ========================================================================
-        // STEP 4: Start Real-Time Telemetry Processing
+        // STEP 4: Real-Time Telemetry Handling
         // ========================================================================
-        std::cout << "=== Starting Real-Time Processing ===\n";
-        estimator.getTelemetryProcessor().startRealTimeProcessing();
-        std::cout << "✓ Real-time telemetry processing started\n";
-        std::cout << "  - Thread-safe update queue active\n";
-        std::cout << "  - Ready for asynchronous measurement updates\n\n";
+        std::cout << "=== Real-Time Telemetry Handling ===\n";
+        std::cout << "Telemetry updates are applied immediately (single-threaded processing).\n\n";
         
         // ========================================================================
         // STEP 5: Initial Full Estimation
@@ -141,7 +139,6 @@ int main(int argc, char* argv[]) {
         if (!result.converged) {
             std::cerr << "ERROR: Initial estimation failed\n";
             std::cerr << "Message: " << result.message << "\n";
-            estimator.getTelemetryProcessor().stopRealTimeProcessing();
             return 1;
         }
         
@@ -306,7 +303,7 @@ int main(int argc, char* argv[]) {
         sle::baddata::BadDataDetector badDataDetector;
         badDataDetector.setNormalizedResidualThreshold(3.0);  // 3-sigma threshold
         auto badDataResult = badDataDetector.detectBadData(
-            *telemetry, *result.state, *network);
+            *telemetryShared, *result.state, *network);
         
         if (badDataResult.hasBadData) {
             std::cout << "⚠ Bad data detected in " << badDataResult.badDeviceIds.size() 
@@ -333,7 +330,7 @@ int main(int argc, char* argv[]) {
         
         // Comparison report
         auto comparisons = sle::io::ComparisonReport::compare(
-            *telemetry, *result.state, *network);
+            *telemetryShared, *result.state, *network);
         sle::io::ComparisonReport::writeReport("realtime_comparison.txt", comparisons);
         std::cout << "✓ Comparison report saved to: realtime_comparison.txt\n";
         
@@ -343,7 +340,7 @@ int main(int argc, char* argv[]) {
             summaryFile << "=== Real-Time State Estimation Summary ===\n\n";
             summaryFile << "Network: " << network->getBusCount() << " buses, " 
                        << network->getBranchCount() << " branches\n";
-            summaryFile << "Measurements: " << telemetry->getMeasurementCount() << "\n";
+            summaryFile << "Measurements: " << telemetryShared->getMeasurementCount() << "\n";
             summaryFile << "Estimation: " << (result.converged ? "Converged" : "Failed") 
                        << " in " << result.iterations << " iterations\n";
             summaryFile << "Computation time: " << duration << " ms\n\n";
@@ -437,12 +434,6 @@ int main(int argc, char* argv[]) {
                          << branch->getIAmps() << " A\n";
             }
         }
-        
-        // ========================================================================
-        // STEP 13: Stop Real-Time Processing
-        // ========================================================================
-        estimator.getTelemetryProcessor().stopRealTimeProcessing();
-        std::cout << "\n✓ Real-time processing stopped\n";
         
         std::cout << "\n=== Production Real-Time Setup Completed Successfully ===\n";
         std::cout << "All estimated values are available via Bus/Branch getters:\n";

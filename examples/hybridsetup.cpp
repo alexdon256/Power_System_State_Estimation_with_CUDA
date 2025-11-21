@@ -68,21 +68,23 @@ int main(int argc, char* argv[]) {
         std::string measurementFile = (argc > 2) ? argv[2] : "examples/ieee14/measurements.csv";
         
         std::cout << "Loading network model from: " << networkFile << "\n";
-        auto network = sle::interface::ModelLoader::loadFromIEEE(networkFile);
-        if (!network) {
+        auto networkUnique = sle::interface::ModelLoader::loadFromIEEE(networkFile);
+        if (!networkUnique) {
             std::cerr << "ERROR: Failed to load network model\n";
             return 1;
         }
+        auto network = std::shared_ptr<sle::model::NetworkModel>(std::move(networkUnique));
         std::cout << "  - Loaded " << network->getBusCount() << " buses, " 
                   << network->getBranchCount() << " branches\n";
         
         std::cout << "Loading measurements from: " << measurementFile << "\n";
-        auto telemetry = sle::interface::MeasurementLoader::loadTelemetry(
+        auto telemetryUnique = sle::interface::MeasurementLoader::loadTelemetry(
             measurementFile, *network);
-        if (!telemetry) {
+        if (!telemetryUnique) {
             std::cerr << "ERROR: Failed to load telemetry data\n";
             return 1;
         }
+        auto telemetry = std::shared_ptr<sle::model::TelemetryData>(std::move(telemetryUnique));
         std::cout << "  - Loaded " << telemetry->getMeasurementCount() << " measurements\n\n";
         
         // ========================================================================
@@ -156,8 +158,7 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "=== Configuring Standard WLS Estimator ===\n";
         sle::interface::StateEstimator estimator;
-        // NetworkModel is non-copyable, so convert unique_ptr to shared_ptr
-        estimator.setNetwork(std::shared_ptr<sle::model::NetworkModel>(network.release()));
+        estimator.setNetwork(network);
         estimator.setTelemetryData(telemetry);
         
         // Real-time mode: Fast, relaxed tolerance
@@ -186,13 +187,7 @@ int main(int argc, char* argv[]) {
         badDataDetector.setNormalizedResidualThreshold(3.0);  // 3-sigma rule
         std::cout << "✓ Bad data detector configured\n\n";
         
-        // ========================================================================
-        // STEP 7: Start Real-Time Processing
-        // ========================================================================
-        std::cout << "=== Starting Real-Time Processing ===\n";
-        estimator.getTelemetryProcessor().startRealTimeProcessing();
-        std::cout << "✓ Real-time processing started\n\n";
-        
+       
         // ========================================================================
         // STEP 8: Initial Full Estimation (Standard WLS)
         // ========================================================================
@@ -305,8 +300,8 @@ int main(int argc, char* argv[]) {
                         if (bus && busCount < 3) {
                             std::cout << "    Bus " << bus->getId() << ": V=" 
                                       << bus->getVPU() << " p.u., P=" 
-                                      << bus->getPMW() << " MW, Q=" 
-                                      << bus->getQMVAR() << " MVAR\n";
+                                      << bus->getPInjectionMW() << " MW, Q=" 
+                                      << bus->getQInjectionMVAR() << " MVAR\n";
                             busCount++;
                         }
                     }
@@ -360,8 +355,8 @@ int main(int argc, char* argv[]) {
                     std::cout << std::setw(6) << bus->getId() << " | "
                               << std::setw(8) << bus->getVPU() << " | "
                               << std::setw(7) << bus->getVKV() << " | "
-                              << std::setw(9) << bus->getPMW() << " | "
-                              << std::setw(9) << bus->getQMVAR() << "\n";
+                              << std::setw(9) << bus->getPInjectionMW() << " | "
+                              << std::setw(9) << bus->getQInjectionMVAR() << "\n";
                     displayCount++;
                 }
             }
@@ -391,12 +386,6 @@ int main(int argc, char* argv[]) {
             }
             std::cout << "\n";
         }
-        
-        // ========================================================================
-        // STEP 12: Stop Real-Time Processing
-        // ========================================================================
-        estimator.getTelemetryProcessor().stopRealTimeProcessing();
-        std::cout << "✓ Real-time processing stopped\n";
         
         std::cout << "\n=== Hybrid Setup Completed Successfully ===\n";
         return 0;

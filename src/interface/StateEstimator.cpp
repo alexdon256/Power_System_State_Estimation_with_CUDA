@@ -22,9 +22,7 @@ StateEstimator::StateEstimator()
     telemetryProcessor_.setTelemetryData(telemetry_.get());
 }
 
-StateEstimator::~StateEstimator() {
-    telemetryProcessor_.stopRealTimeProcessing();
-}
+StateEstimator::~StateEstimator() = default;
 
 void StateEstimator::setNetwork(std::shared_ptr<model::NetworkModel> network) {
     network_ = network;
@@ -66,9 +64,6 @@ StateEstimationResult StateEstimator::estimate() {
         return result;
     }
     
-    // Process any pending telemetry updates
-    telemetryProcessor_.processUpdateQueue();
-    
     // Initialize state if needed
     if (!currentState_ || currentState_->size() != network_->getBusCount()) {
         initializeState();
@@ -108,9 +103,6 @@ StateEstimationResult StateEstimator::estimateIncremental() {
         result.message = "Network or telemetry data not set";
         return result;
     }
-    
-    // Process pending updates
-    telemetryProcessor_.processUpdateQueue();
     
     // Use relaxed tolerance and fewer iterations for incremental updates (faster convergence)
     math::SolverConfig incrementalConfig = solverConfig_;

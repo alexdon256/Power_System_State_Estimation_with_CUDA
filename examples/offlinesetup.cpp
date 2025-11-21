@@ -52,21 +52,23 @@ int main(int argc, char* argv[]) {
         std::string measurementFile = (argc > 2) ? argv[2] : "examples/ieee14/measurements.csv";
         
         std::cout << "Loading network model from: " << networkFile << "\n";
-        auto network = sle::interface::ModelLoader::loadFromIEEE(networkFile);
-        if (!network) {
+        auto networkUnique = sle::interface::ModelLoader::loadFromIEEE(networkFile);
+        if (!networkUnique) {
             std::cerr << "ERROR: Failed to load network model\n";
             return 1;
         }
+        auto network = std::shared_ptr<sle::model::NetworkModel>(std::move(networkUnique));
         std::cout << "  - Loaded " << network->getBusCount() << " buses, " 
                   << network->getBranchCount() << " branches\n";
         
         std::cout << "Loading measurements from: " << measurementFile << "\n";
-        auto telemetry = sle::interface::MeasurementLoader::loadTelemetry(
+        auto telemetryUnique = sle::interface::MeasurementLoader::loadTelemetry(
             measurementFile, *network);
-        if (!telemetry) {
+        if (!telemetryUnique) {
             std::cerr << "ERROR: Failed to load telemetry data\n";
             return 1;
         }
+        auto telemetry = std::shared_ptr<sle::model::TelemetryData>(std::move(telemetryUnique));
         std::cout << "  - Loaded " << telemetry->getMeasurementCount() << " measurements\n\n";
         
         // ========================================================================
@@ -111,8 +113,7 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "=== Configuring Estimator ===\n";
         sle::interface::StateEstimator estimator;
-        // NetworkModel is non-copyable, so convert unique_ptr to shared_ptr
-        estimator.setNetwork(std::shared_ptr<sle::model::NetworkModel>(network.release()));
+        estimator.setNetwork(network);
         estimator.setTelemetryData(telemetry);
         
         // Offline mode: High accuracy, relaxed timing
@@ -209,6 +210,8 @@ int main(int argc, char* argv[]) {
         badDataDetector.setNormalizedResidualThreshold(3.0);
         auto badDataResult = badDataDetector.detectBadData(
             *telemetry, *result.state, *network);
+            auto badDataResult = badDataDetector.detectBadData(
+                *telemetry, *result.state, *network);
         
         if (badDataResult.hasBadData) {
             std::cout << "⚠ Bad data detected in " << badDataResult.badDeviceIds.size() 
