@@ -38,7 +38,7 @@ LoadFlowResult LoadFlow::solve(const NetworkModel& network, const StateVector& i
     if (config_.useFastDecoupled) {
         return solveFastDecoupled(&network, &initialState);
     } else {
-        return solveNewtonRaphson(&network, &initialState);
+        return solveNewtonRaphson(network, &initialState);
     }
 }
 
@@ -123,11 +123,11 @@ LoadFlowResult LoadFlow::solveNewtonRaphson(const NetworkModel& network,
     return result;
 }
 
-LoadFlowResult LoadFlow::solveFastDecoupled(const NetworkModel& network,
+LoadFlowResult LoadFlow::solveFastDecoupled(const NetworkModel* network,
                                             const StateVector* initialState) {
     // Fast decoupled load flow implementation
     // Simplified version - full implementation would separate P-θ and Q-V updates
-    return solveNewtonRaphson(&network, initialState);
+    return solveNewtonRaphson(network, initialState);
 }
 
 void LoadFlow::computeMismatches(const NetworkModel& network, const StateVector& state,

@@ -58,7 +58,7 @@ private:
     LoadFlowResult solveNewtonRaphson(const model::NetworkModel& network, const model::StateVector* initialState);
     
     // Fast decoupled load flow
-    LoadFlowResult solveFastDecoupled(const model::NetworkModel& network, const model::StateVector* initialState);
+    LoadFlowResult solveFastDecoupled(const model::NetworkModel* network, const model::StateVector* initialState);
     
     // Build power flow Jacobian
     void buildPowerFlowJacobian(const model::NetworkModel& network, const model::StateVector& state,
