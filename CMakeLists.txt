@@ -2,24 +2,27 @@ cmake_minimum_required(VERSION 3.18)
 
 # Allow unsupported compiler versions (needed for newer VS2022 with CUDA 11.8)
 # Must be set before project() so it applies during compiler detection
-# Set as cache variables with FORCE to ensure they're used during compiler identification
+# Set as normal variable first (for compiler identification), then cache (for later use)
 
 # Read from environment variable first (set by CI/CD), then cache variable, then default
+# Set as normal variable (not cached) so CMake uses it during compiler identification
 if(DEFINED ENV{CMAKE_CUDA_FLAGS_INIT})
-    set(CMAKE_CUDA_FLAGS_INIT "$ENV{CMAKE_CUDA_FLAGS_INIT}" CACHE STRING "Initial CUDA compiler flags" FORCE)
+    set(CMAKE_CUDA_FLAGS_INIT "$ENV{CMAKE_CUDA_FLAGS_INIT}")
 elseif(DEFINED CMAKE_CUDA_FLAGS_INIT)
-    # Already set via -D on command line, ensure it's cached
-    set(CMAKE_CUDA_FLAGS_INIT "${CMAKE_CUDA_FLAGS_INIT}" CACHE STRING "Initial CUDA compiler flags" FORCE)
+    # Already set via -D on command line, use as-is
+    set(CMAKE_CUDA_FLAGS_INIT "${CMAKE_CUDA_FLAGS_INIT}")
 else()
-    # Set default value as cache variable
-    set(CMAKE_CUDA_FLAGS_INIT "-allow-unsupported-compiler" CACHE STRING "Initial CUDA compiler flags" FORCE)
+    # Set default value as normal variable
+    set(CMAKE_CUDA_FLAGS_INIT "-allow-unsupported-compiler")
 endif()
 
 # Ensure flag is present (append if not already there)
-get_property(_cuda_flags_init CACHE CMAKE_CUDA_FLAGS_INIT PROPERTY VALUE)
-if(NOT _cuda_flags_init MATCHES "-allow-unsupported-compiler")
-    set(CMAKE_CUDA_FLAGS_INIT "${_cuda_flags_init} -allow-unsupported-compiler" CACHE STRING "Initial CUDA compiler flags" FORCE)
+if(NOT CMAKE_CUDA_FLAGS_INIT MATCHES "-allow-unsupported-compiler")
+    set(CMAKE_CUDA_FLAGS_INIT "${CMAKE_CUDA_FLAGS_INIT} -allow-unsupported-compiler")
 endif()
+
+# Also set as cache variable for later use (after project() call)
+set(CMAKE_CUDA_FLAGS_INIT "${CMAKE_CUDA_FLAGS_INIT}" CACHE STRING "Initial CUDA compiler flags" FORCE)
 
 # Also set for regular compilation
 if(DEFINED ENV{CMAKE_CUDA_FLAGS})
