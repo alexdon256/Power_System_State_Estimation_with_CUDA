@@ -200,10 +200,12 @@ jobs:
         $buildDir = "build-${{ matrix.config.name }}"
         New-Item -ItemType Directory -Force -Path $buildDir
         # Set CUDA flags via multiple methods for maximum compatibility
+        # Use toolchain file to set flags before project() call
         cmake -S . -B $buildDir `
           -G "Visual Studio 17 2022" `
           -A x64 `
           -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} `
+          -DCMAKE_TOOLCHAIN_FILE=cmake/CudaToolchain.cmake `
           -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
           -DCMAKE_CUDA_FLAGS_INIT="-allow-unsupported-compiler" `
           -DCUDA_ARCH=sm_75 `

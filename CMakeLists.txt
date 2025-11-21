@@ -2,31 +2,38 @@ cmake_minimum_required(VERSION 3.18)
 
 # Allow unsupported compiler versions (needed for newer VS2022 with CUDA 11.8)
 # Must be set before project() so it applies during compiler detection
-# Try multiple methods to ensure the flag is available during compiler identification
+# Set as cache variables with FORCE to ensure they're used during compiler identification
 
-# Method 1: Read from environment variable (set by CI/CD)
+# Read from environment variable first (set by CI/CD), then cache variable, then default
 if(DEFINED ENV{CMAKE_CUDA_FLAGS_INIT})
-    set(CMAKE_CUDA_FLAGS_INIT "$ENV{CMAKE_CUDA_FLAGS_INIT}")
+    set(CMAKE_CUDA_FLAGS_INIT "$ENV{CMAKE_CUDA_FLAGS_INIT}" CACHE STRING "Initial CUDA compiler flags" FORCE)
 elseif(DEFINED CMAKE_CUDA_FLAGS_INIT)
-    # Method 2: Use cache variable if set via -D on command line
-    set(CMAKE_CUDA_FLAGS_INIT "${CMAKE_CUDA_FLAGS_INIT}")
+    # Already set via -D on command line, ensure it's cached
+    set(CMAKE_CUDA_FLAGS_INIT "${CMAKE_CUDA_FLAGS_INIT}" CACHE STRING "Initial CUDA compiler flags" FORCE)
 else()
-    # Method 3: Set default value as normal variable (not cached)
-    set(CMAKE_CUDA_FLAGS_INIT "-allow-unsupported-compiler")
+    # Set default value as cache variable
+    set(CMAKE_CUDA_FLAGS_INIT "-allow-unsupported-compiler" CACHE STRING "Initial CUDA compiler flags" FORCE)
 endif()
 
 # Ensure flag is present (append if not already there)
-if(NOT CMAKE_CUDA_FLAGS_INIT MATCHES "-allow-unsupported-compiler")
-    set(CMAKE_CUDA_FLAGS_INIT "${CMAKE_CUDA_FLAGS_INIT} -allow-unsupported-compiler")
+get_property(_cuda_flags_init CACHE CMAKE_CUDA_FLAGS_INIT PROPERTY VALUE)
+if(NOT _cuda_flags_init MATCHES "-allow-unsupported-compiler")
+    set(CMAKE_CUDA_FLAGS_INIT "${_cuda_flags_init} -allow-unsupported-compiler" CACHE STRING "Initial CUDA compiler flags" FORCE)
 endif()
 
-# Also set as cache variable for actual compilation
-if(CMAKE_CUDA_FLAGS)
-    if(NOT CMAKE_CUDA_FLAGS MATCHES "-allow-unsupported-compiler")
-        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler" CACHE STRING "CUDA compiler flags" FORCE)
-    endif()
+# Also set for regular compilation
+if(DEFINED ENV{CMAKE_CUDA_FLAGS})
+    set(CMAKE_CUDA_FLAGS "$ENV{CMAKE_CUDA_FLAGS}" CACHE STRING "CUDA compiler flags" FORCE)
+elseif(DEFINED CMAKE_CUDA_FLAGS)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}" CACHE STRING "CUDA compiler flags" FORCE)
 else()
     set(CMAKE_CUDA_FLAGS "-allow-unsupported-compiler" CACHE STRING "CUDA compiler flags" FORCE)
+endif()
+
+# Ensure flag is present in regular flags too
+get_property(_cuda_flags CACHE CMAKE_CUDA_FLAGS PROPERTY VALUE)
+if(NOT _cuda_flags MATCHES "-allow-unsupported-compiler")
+    set(CMAKE_CUDA_FLAGS "${_cuda_flags} -allow-unsupported-compiler" CACHE STRING "CUDA compiler flags" FORCE)
 endif()
 
 project(SLE VERSION 1.0.0 LANGUAGES CXX CUDA)
