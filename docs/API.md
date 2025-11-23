@@ -107,7 +107,7 @@ auto result = estimator.estimate();
 ```cpp
 // Get reference to telemetry processor for real-time updates
 // processor: TelemetryProcessor instance that handles asynchronous measurement updates
-//           Provides thread-safe measurement updates without full network reload
+//           Provides measurement updates without full network reload
 auto& processor = estimator.getTelemetryProcessor();
 
 // Start real-time processing thread
@@ -133,7 +133,6 @@ update.timestamp = getCurrentTimestamp();        // Unix timestamp in millisecon
 
 // Update the measurement in real-time
 // This updates the existing measurement if deviceId matches, or adds a new measurement
-// Thread-safe operation that can be called from multiple threads
 processor.updateMeasurement(update);
 
 // Run incremental state estimation (faster than full estimation)
@@ -198,13 +197,6 @@ Load telemetry and measurement data.
 auto telemetry = sle::interface::MeasurementLoader::loadFromCSV(
     "measurements.csv", *network);
 
-// Add virtual measurements (zero injection constraints)
-// Virtual measurements enforce Kirchhoff's current law: sum of injections = 0 at buses
-// Added automatically for buses with no load and no generation (zero injection buses)
-// *telemetry: TelemetryData to modify (adds virtual measurements)
-// *network: NetworkModel used to identify zero injection buses
-// Virtual measurements have very high weight (low stdDev) to enforce constraints exactly
-sle::interface::MeasurementLoader::addVirtualMeasurements(*telemetry, *network);
 
 // Add pseudo measurements (load forecasts or historical patterns)
 // Pseudo measurements improve observability when real measurements are insufficient
@@ -359,13 +351,9 @@ robust.setConfig(config);
 // telemetry: TelemetryData reference
 auto result = robust.estimate(state, network, telemetry);
 
-// Compute values from robust estimation result
+// All values are automatically computed by estimate() (GPU-accelerated)
+// No need to call computeVoltEstimates, computePowerInjections, or computePowerFlows
 if (result.state) {
-    bool useGPU = true;
-    network->computeVoltEstimates(*result.state, useGPU);
-    network->computePowerInjections(*result.state, useGPU);
-    network->computePowerFlows(*result.state, useGPU);
-    
     // Access computed values via Bus/Branch getters
     auto buses = network->getBuses();
     for (auto* bus : buses) {
@@ -769,18 +757,9 @@ After state estimation (standard WLS or robust estimation), computed values (vol
 // All computations are GPU-accelerated when useGPU=true
 // Values are stored in Bus and Branch objects for easy access
 
-// Step 1: Compute voltage estimates (stores in Bus objects)
-// Computes: vPU, vKV, thetaRad, thetaDeg for all buses
-// useGPU: Enable GPU acceleration (default: false)
-network->computeVoltEstimates(*result.state, useGPU);
-
-// Step 2: Compute power injections (stores in Bus objects)
-// Computes: P, Q, MW, MVAR injections for all buses
-network->computePowerInjections(*result.state, useGPU);
-
-// Step 3: Compute power flows (stores in Branch objects)
-// Computes: P, Q, MW, MVAR, I (amps and p.u.) for all branches
-network->computePowerFlows(*result.state, useGPU);
+// Note: All values are automatically computed by StateEstimator::estimate()
+// No need to call computeVoltEstimates, computePowerInjections, or computePowerFlows
+// They are called automatically after estimation completes (GPU-accelerated)
 ```
 
 ### Extracting Values from Buses
@@ -797,7 +776,7 @@ for (auto* bus : buses) {
         Real thetaRad = bus->getThetaRad();  // Angle in radians
         Real thetaDeg = bus->getThetaDeg();  // Angle in degrees
         
-        // Power injections (computed by computePowerInjections)
+        // Power injections (automatically computed by estimate())
         Real pInj = bus->getPInjection();        // P injection in p.u.
         Real qInj = bus->getQInjection();        // Q injection in p.u.
         Real pMW = bus->getPInjectionMW();       // P injection in MW
@@ -820,13 +799,13 @@ auto branches = network->getBranches();
 
 for (auto* branch : branches) {
     if (branch) {
-        // Power flows (computed by computePowerFlows)
+        // Power flows (automatically computed by estimate())
         Real pFlow = branch->getPFlow();     // P flow in p.u.
         Real qFlow = branch->getQFlow();     // Q flow in p.u.
         Real pMW = branch->getPMW();         // P flow in MW
         Real qMVAR = branch->getQMVAR();     // Q flow in MVAR
         
-        // Current (computed by computePowerFlows)
+        // Current (automatically computed by estimate())
         Real iPU = branch->getIPU();         // Current in per-unit
         Real iAmps = branch->getIAmps();      // Current in Amperes
         
@@ -848,11 +827,8 @@ for (auto* branch : branches) {
 auto result = estimator.estimate();
 
 if (result.converged && result.state) {
-    // Compute all values (GPU-accelerated)
-    bool useGPU = true;
-    network->computeVoltEstimates(*result.state, useGPU);
-    network->computePowerInjections(*result.state, useGPU);
-    network->computePowerFlows(*result.state, useGPU);
+    // All values are automatically computed by estimate() (GPU-accelerated)
+    // No need to call computeVoltEstimates, computePowerInjections, or computePowerFlows
     
     // Extract and use values
     for (auto* bus : network->getBuses()) {
@@ -892,9 +868,8 @@ auto robustResult = robustEstimator.estimate(*robustState, *network, *telemetry)
 if (robustResult.converged && robustResult.state) {
     // Compute all values from robust estimation (GPU-accelerated)
     bool useGPU = true;
-    network->computeVoltEstimates(*robustResult.state, useGPU);
-    network->computePowerInjections(*robustResult.state, useGPU);
-    network->computePowerFlows(*robustResult.state, useGPU);
+    // All values are automatically computed by estimate() (GPU-accelerated)
+    // No need to call computeVoltEstimates, computePowerInjections, or computePowerFlows
     
     // Extract and use values (same API as standard WLS)
     for (auto* bus : network->getBuses()) {

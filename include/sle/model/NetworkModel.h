@@ -66,46 +66,33 @@ public:
     void setReferenceBus(BusId busId);
     BusId getReferenceBus() const { return referenceBus_; }
     
-    // Build admittance matrix (for CPU reference)
-    void buildAdmittanceMatrix(std::vector<Complex>& Y, std::vector<Index>& rowPtr, 
-                               std::vector<Index>& colInd) const;
-    
     // Real-time updates
     void updateBus(BusId id, const Bus& busData);
     void updateBranch(BranchId id, const Branch& branchData);
     void removeBus(BusId id);
     void removeBranch(BranchId id);
-    void invalidateAdmittanceMatrix();  // Mark matrix as needing rebuild
-    
     void clear();
     
     // Get index from bus ID
     Index getBusIndex(BusId id) const;
     Index getBranchIndex(BranchId id) const;
     
-    // Compute and store voltage estimates in buses
-    // Computes vPU, vKV, thetaRad, thetaDeg for all buses and stores in Bus objects
-    // useGPU: if true, uses GPU acceleration (requires CUDA)
-    void computeVoltEstimates(const StateVector& state, bool useGPU = false);
-    
-    // Compute and store power injections in buses
+    // CUDA-EXCLUSIVE: Compute and store power injections in buses
     // Computes P, Q, MW, MVAR injections for all buses and stores in Bus objects
-    // useGPU: if true, uses GPU acceleration (requires CUDA)
-    void computePowerInjections(const StateVector& state, bool useGPU = false);
+    // Used by LoadFlow solver
+    void computePowerInjections(const StateVector& state);
     
-    // Compute and store power flows in branches
-    // Computes P, Q, MW, MVAR, I (amps and p.u.) for all branches and stores in Branch objects
-    // useGPU: if true, uses GPU acceleration (requires CUDA)
-    void computePowerFlows(const StateVector& state, bool useGPU = false);
-    
-    // Legacy methods (for backward compatibility) - return vectors instead of storing
+    // Legacy method (for backward compatibility) - return vectors instead of storing
+    // CUDA-EXCLUSIVE: All computations on GPU
+    // Used internally by computePowerInjections(state) and by LoadFlow
+    // Optional dataManager: if provided, reuses existing GPU data; otherwise creates temporary
     void computePowerInjections(const StateVector& state,
                                std::vector<Real>& pInjection, std::vector<Real>& qInjection,
-                               bool useGPU = false) const;
+                               sle::cuda::CudaDataManager* dataManager = nullptr) const;
     
-    void computePowerFlows(const StateVector& state,
-                          std::vector<Real>& pFlow, std::vector<Real>& qFlow,
-                          bool useGPU = false) const;
+    // Note: computePowerFlows and computeVoltEstimates methods removed
+    // They are replaced by Solver::storeComputedValues() which reuses GPU-computed values
+    // This eliminates redundant GPU computations and host-device transfers
     
 private:
 #ifdef USE_CUDA
@@ -132,11 +119,10 @@ private:
     mutable std::vector<std::vector<Index>> branchesToBus_;    // branchesToBus_[busIdx] = branch indices
     mutable bool adjacencyDirty_;
     
-    // Cached CPU vectors for power computations (reused across calls, only resized on network changes)
+    // Cached CPU vectors for power injection computations (reused across calls, only resized on network changes)
+    // Note: Power flows are computed directly in Solver::storeComputedValues, no caching needed
     mutable std::vector<Real> cachedPInjection_;
     mutable std::vector<Real> cachedQInjection_;
-    mutable std::vector<Real> cachedPFlow_;
-    mutable std::vector<Real> cachedQFlow_;
     
     // Helper methods
 #ifdef USE_CUDA

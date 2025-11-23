@@ -107,7 +107,6 @@ set(SOURCES
     src/measurements/PseudoMeasurementGenerator.cpp
     src/utils/LoadDistributor.cpp
     src/utils/EstimationComparator.cpp
-    src/cuda/CudaMemoryManager.cpp
     src/multiarea/MultiAreaEstimator.cpp
     src/observability/OptimalPlacement.cpp
 )
@@ -122,10 +121,10 @@ set(CUDA_SOURCES
     src/math/CuSOLVERIntegration.cu
     src/math/LoadFlow.cu
     src/cuda/CudaSparseOps.cu
-    src/cuda/CudaMeasurementKernels.cu
-    src/cuda/CudaJacobianKernels.cu
-    src/cuda/CudaVectorOps.cu
-    src/cuda/CudaWeightedOps.cu
+    src/cuda/CudaMemoryMonitor.cu
+    src/cuda/CudaSolverOps.cu
+    src/cuda/CudaReduction.cu
+    src/cuda/CudaKernels.cu
 )
 
 # Create library as shared (DLL)

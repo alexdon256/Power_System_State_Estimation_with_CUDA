@@ -66,16 +66,14 @@ public:
     void setSolverConfig(const math::SolverConfig& config);
     const math::SolverConfig& getSolverConfig() const;
     
-    // Real-time update methods
-    void updateNetworkModel(std::shared_ptr<model::NetworkModel> network);
-    void updateTelemetryData(std::shared_ptr<model::TelemetryData> telemetry);
-    
     // Convenience methods for easier usage
     // Configure for real-time operation (fast, relaxed tolerance)
-    void configureForRealTime(Real tolerance = 1e-5, int maxIterations = 15, bool useGPU = true);
+    // CUDA-EXCLUSIVE: All operations use GPU
+    void configureForRealTime(Real tolerance = 1e-5, int maxIterations = 15);
     
     // Configure for offline analysis (accurate, tight tolerance)
-    void configureForOffline(Real tolerance = 1e-8, int maxIterations = 50, bool useGPU = true);
+    // CUDA-EXCLUSIVE: All operations use GPU
+    void configureForOffline(Real tolerance = 1e-8, int maxIterations = 50);
     
     // Quick setup: load network and telemetry from files
     bool loadFromFiles(const std::string& networkFile, const std::string& telemetryFile);

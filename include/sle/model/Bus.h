@@ -51,13 +51,13 @@ public:
     
     bool isZeroInjection() const;
     
-    // Getters for computed voltage estimates (set by computeVoltEstimates)
+    // Getters for computed voltage estimates (set by Solver::storeComputedValues)
     Real getVPU() const { return vPU_; }              // Voltage in per-unit
     Real getVKV() const { return vKV_; }              // Voltage in kV
     Real getThetaRad() const { return thetaRad_; }     // Angle in radians
     Real getThetaDeg() const { return thetaDeg_; }     // Angle in degrees
     
-    // Getters for computed power injections (set by computePowerInjections)
+    // Getters for computed power injections (set by computePowerInjections or Solver::storeComputedValues)
     Real getPInjection() const { return pInjection_; }        // P injection in p.u.
     Real getQInjection() const { return qInjection_; }        // Q injection in p.u.
     Real getPInjectionMW() const { return pInjectionMW_; }    // P injection in MW

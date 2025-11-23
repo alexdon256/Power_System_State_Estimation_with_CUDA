@@ -31,7 +31,7 @@ struct SLE_API RobustEstimatorConfig {
     Real tuningConstant = 1.345;  // Default for Huber
     Real tolerance = 1e-6;
     Index maxIterations = 50;
-    bool useGPU = true;
+    // Note: All operations are CUDA-exclusive (GPU required)
 };
 
 class SLE_API RobustEstimator {

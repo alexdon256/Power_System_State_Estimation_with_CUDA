@@ -33,10 +33,17 @@ public:
     void initialize();
     void cleanup();
     
-    // Solve sparse linear system: A * x = b
+    // Set CUDA stream for all cuSOLVER/cuSPARSE operations
+    void setStream(cudaStream_t stream);
+    
+    // Solve sparse linear system: A * x = b (host data)
     // Using cuSOLVER's sparse direct solver
     bool solveSparse(const SparseMatrix& A, const std::vector<Real>& b,
                     std::vector<Real>& x);
+    
+    // CUDA-EXCLUSIVE: Solve sparse linear system entirely on GPU: A * x = b
+    // d_b and d_x are device pointers, no host transfers
+    bool solveSparseGPU(const SparseMatrix& A, const Real* d_b, Real* d_x, Index n);
     
     // Solve using iterative refinement
     bool solveSparseIterative(const SparseMatrix& A, const std::vector<Real>& b,

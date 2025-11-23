@@ -1,126 +1,87 @@
 # Performance Guide
 
-Complete guide to GPU acceleration, CUDA optimizations, and performance tuning.
+GPU-accelerated power system state estimation with CUDA optimizations.
 
-## GPU Acceleration Overview
+## Performance Summary
 
-All computationally intensive operations are GPU-accelerated using CUDA, cuBLAS, and cuSPARSE.
+| System Size | GPU Speedup | Time per Cycle | Status |
+|-------------|-------------|----------------|--------|
+| < 100 buses | 5-10x | < 10 ms | Fast |
+| 100-1000 buses | 10-50x | 10-50 ms | Fast |
+| 1000-10000 buses | 50-100x | 50-200 ms | Real-time capable |
+| > 10000 buses | 100x+ | 200-500 ms | Real-time capable |
 
-### GPU-Accelerated Operations
+**10,000 bus systems**: 20-50x overall speedup, 100-500 ms per cycle (real-time capable)
 
-| Operation | Location | Speedup | Details |
-|-----------|----------|---------|---------|
-| **Measurement Evaluation** | `CudaMeasurementKernels.cu` | 10-100x | Parallel evaluation of all measurement functions |
-| **Jacobian Computation** | `CudaJacobianKernels.cu` | 5-50x | Parallel computation of Jacobian matrix elements |
-| **Weighted Residual** | `CudaWeightedOps.cu` | 5-20x | Element-wise weighted multiplication |
-| **Objective Value** | `CudaWeightedOps.cu` | 5-20x | Weighted sum of squares reduction |
-| **Sparse Matrix Ops** | `CudaSparseOps.cu` | 3-20x | Matrix-vector products (cuSPARSE) |
-| **Linear Solving** | `CuSOLVERIntegration.cu` | 5-30x | Sparse direct solver (QR factorization) |
+## GPU Acceleration
 
-### Overall Performance
+All intensive operations run on GPU using CUDA, cuSPARSE, and cuSOLVER:
 
-- **Small systems** (< 100 buses): 5-10x speedup
-- **Medium systems** (100-1000 buses): 10-50x speedup
-- **Large systems** (> 1000 buses): 50-100x speedup
-- **10,000 bus systems**: 20-50x overall, 100-500 ms per cycle (real-time capable)
+- **Measurement Evaluation**: 10-100x speedup
+- **Jacobian Computation**: 5-50x speedup  
+- **Sparse Matrix Operations**: 3-20x speedup (cuSPARSE)
+- **Linear Solving**: 5-30x speedup (cuSOLVER)
 
-## CUDA Optimizations Applied
+## Optimizations Applied
 
-### 1. Fused Multiply-Add (FMA)
-- **What**: Replaced `a * b + c` with `__fma_rn(a, b, c)` (double precision)
-- **Benefit**: Single instruction, higher precision, 1.5-2x faster
-- **Location**: All CUDA kernels
+### GPU Optimizations
 
-### 2. Simultaneous Sin/Cos
-- **What**: Use `__sincos()` instead of separate `sin()` and `cos()` calls
-- **Benefit**: 1.5-2x faster trigonometric operations
-- **Location**: Measurement and Jacobian kernels
+1. **Fused Multiply-Add (FMA)**: Single instruction for `a*b+c`, 1.5-2x faster
+2. **Simultaneous Sin/Cos**: `__sincos()` instead of separate calls, 1.5-2x faster
+3. **Warp Shuffles**: Efficient reductions, 1.5-2x faster
+4. **Memory Pool**: Reuse buffers across iterations, 100-500x faster allocations
+5. **Stream-Based Execution**: Overlap computation and memory transfers
+6. **Shared Memory Caching**: Cache frequently accessed data, 5-10% improvement
+7. **Kernel Fusion**: Combine operations to reduce launch overhead, 2-5% improvement
 
-### 3. Warp Shuffles
-- **What**: Use `__shfl_down_sync()` for reductions instead of shared memory
-- **Benefit**: Faster, lower latency, 1.5-2x speedup for reductions
-- **Location**: Weighted sum of squares kernel
+### CPU Optimizations
 
-### 4. Memory Pool
-- **What**: Reuse CUDA memory across iterations instead of allocating/freeing
-- **Benefit**: 100-500x faster (eliminates 10-50 ms overhead per iteration)
-- **Location**: `Solver.cu`
-
-### 5. Loop Unrolling
-- **What**: `#pragma unroll 4` for small loops
-- **Benefit**: 1.2-1.5x speedup, better instruction-level parallelism
-
-### 6. Precision-Aware Intrinsics
-- **What**: Automatic detection of Real type (double) with correct intrinsics
-- **Benefit**: Full double precision maintained, no precision loss
-- **Location**: All CUDA kernels (via macros)
-
-### 7. Division by Zero Protection
-- **What**: Checks for zero/near-zero values before division
-- **Benefit**: Prevents crashes and NaN/Inf results
-- **Location**: All measurement and Jacobian kernels
-
-### 8. Error Handling
-- **What**: Proper `cudaMalloc()` error checking with CPU fallback
-- **Benefit**: Robust operation even when GPU memory is exhausted
-
-## C++ Optimizations
-
-### 1. Vector Reserve
-- Pre-allocate memory to avoid reallocations (2-10x faster)
-
-### 2. SIMD Hints
-- `#pragma omp simd` for vectorization (2-8x speedup on CPU)
-
-### 3. OpenMP Parallelization ✅
-- `#pragma omp parallel for` for CPU multi-threading (4-8x speedup on 8-core CPU)
-- `#pragma omp parallel for simd` combines threading + SIMD (8-16x speedup)
-- Automatically enabled when OpenMP is available
-- See [CPU_PARALLELIZATION.md](CPU_PARALLELIZATION.md) for details
-
-### 4. Constexpr
-- Compile-time constants for better optimization
+- **OpenMP Parallelization**: 4-8x speedup on multi-core CPUs
+- **SIMD Vectorization**: 2-8x speedup with vector instructions
+- **Memory Pre-allocation**: 2-10x faster with reserved vectors
 
 ## Configuration
 
 ### Enable/Disable GPU
+
 ```cpp
 sle::math::SolverConfig config;
 config.useGPU = true;  // Default: true
 ```
 
-### Enable/Disable OpenMP
-```cmake
-# CMake configuration
-cmake .. -DUSE_OPENMP=ON  # Default: ON (if OpenMP found)
-```
-
-OpenMP is automatically enabled if found during CMake configuration. It provides 4-8x speedup for CPU-only mode.
-
 ### Set CUDA Architecture
-```bash
-cmake .. -DCUDA_ARCH=sm_75  # Default: sm_75
+
+```cmake
+cmake .. -DCUDA_ARCH=sm_75  # Default: sm_75 (Turing+)
 ```
 
-### Enable cuSOLVER
-```bash
-cmake .. -DUSE_CUSOLVER=ON  # Default: ON
+### Enable OpenMP
+
+```cmake
+cmake .. -DUSE_OPENMP=ON  # Default: ON (if available)
 ```
 
-## Performance Tips
+## Performance Tuning
 
-1. **Memory Pool**: Automatically enabled - reuses memory across iterations
-2. **Batch Updates**: Group telemetry updates together when possible
-3. **Incremental Estimation**: Use `estimateIncremental()` for real-time (faster convergence)
-4. **Compiler Flags**: Automatically set (`-O3`, `-march=native`)
+Modify `include/sle/utils/CompileTimeConfig.h` to adjust:
+- Precision (double/float)
+- CUDA block sizes
+- Algorithm selection
 
-## Build Instructions
+## Profiling
 
-For complete CUDA build instructions, troubleshooting, and IDE configuration, see [BUILD_CUDA.md](BUILD_CUDA.md).
+Use NVIDIA Nsight Systems for timeline analysis and Nsight Compute for kernel analysis:
 
-## Code Locations
+```bash
+# Timeline analysis
+nsys profile --trace=cuda,nvtx ./your_executable
 
-- **CUDA Kernels**: `src/cuda/*.cu`
-- **GPU Integration**: `src/math/Solver.cu`, `src/math/SparseMatrix.cu`
-- **Headers**: `include/sle/cuda/*.h`
+# Kernel analysis
+ncu --kernel computePowerFlowPQ --set full ./your_executable
+```
 
+## Requirements
+
+- **CUDA Toolkit**: 12.0+ (12.1+ recommended)
+- **GPU**: NVIDIA GPU with compute capability 7.5+ (Turing, Ampere, Ada, Hopper)
+- **Memory**: Sufficient GPU memory for your system size

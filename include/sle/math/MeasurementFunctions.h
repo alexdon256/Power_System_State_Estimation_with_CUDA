@@ -11,6 +11,13 @@
 #include <vector>
 #include <memory>
 
+// Forward declaration
+namespace sle {
+namespace cuda {
+    class CudaDataManager;
+}
+}
+
 // Forward declarations
 namespace sle {
 namespace model {
@@ -28,14 +35,21 @@ public:
     MeasurementFunctions();
     ~MeasurementFunctions();
     
-    // Evaluate measurement functions h(x)
-    void evaluate(const model::StateVector& state, const model::NetworkModel& network,
-                  const model::TelemetryData& telemetry, std::vector<Real>& hx,
-                  bool useGPU = false);
+    // Set shared CudaDataManager (optional - creates own if not set)
+    void setDataManager(cuda::CudaDataManager* dataManager);
     
-    // Compute residual r = z - h(x)
-    void computeResidual(const std::vector<Real>& z, const std::vector<Real>& hx,
-                        std::vector<Real>& residual);
+    // CUDA-EXCLUSIVE: Evaluate measurement functions h(x) on GPU
+    // Returns GPU pointer to hx (data stays on GPU)
+    // stream: Optional CUDA stream for asynchronous execution
+    Real* evaluateGPU(const model::StateVector& state, const model::NetworkModel& network,
+                     const model::TelemetryData& telemetry, cudaStream_t stream = nullptr);
+    
+    // Legacy: Evaluate and copy to host (for backward compatibility)
+    void evaluate(const model::StateVector& state, const model::NetworkModel& network,
+                  const model::TelemetryData& telemetry, std::vector<Real>& hx);
+    
+    // Get CudaDataManager (for sharing with JacobianMatrix)
+    cuda::CudaDataManager* getDataManager() const;
     
 private:
     struct Impl;

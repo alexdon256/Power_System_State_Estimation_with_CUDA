@@ -48,13 +48,6 @@ std::shared_ptr<model::TelemetryData> StateEstimator::getTelemetryData() const {
     return telemetry_;
 }
 
-void StateEstimator::updateNetworkModel(std::shared_ptr<model::NetworkModel> network) {
-    setNetwork(network);
-}
-
-void StateEstimator::updateTelemetryData(std::shared_ptr<model::TelemetryData> telemetry) {
-    setTelemetryData(telemetry);
-}
 
 StateEstimationResult StateEstimator::estimate() {
     if (!network_ || !telemetry_) {
@@ -83,9 +76,10 @@ StateEstimationResult StateEstimator::estimate() {
     result.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     
-    // Update bus voltage estimates so downstream consumers don't need to call explicitly
+    // Update all computed values from GPU (optimized - reuses GPU data from solver)
+    // All computations are GPU-accelerated and happen automatically after estimation
     if (network_) {
-        network_->computeVoltEstimates(*currentState_, solverConfig_.useGPU);
+        solver_->storeComputedValues(*currentState_, *network_);
     }
     
     modelUpdated_.store(false);
@@ -122,8 +116,9 @@ StateEstimationResult StateEstimator::estimateIncremental() {
     result.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     
+    // Update all computed values from GPU (optimized - reuses GPU data from solver)
     if (network_) {
-        network_->computeVoltEstimates(*currentState_, incrementalConfig.useGPU);
+        solver_->storeComputedValues(*currentState_, *network_);
     }
     
     telemetryUpdated_.store(false);
@@ -153,19 +148,19 @@ void StateEstimator::initializeState() {
     }
 }
 
-void StateEstimator::configureForRealTime(Real tolerance, int maxIterations, bool useGPU) {
+void StateEstimator::configureForRealTime(Real tolerance, int maxIterations) {
+    // CUDA-EXCLUSIVE: All operations use GPU
     math::SolverConfig config;
     config.tolerance = tolerance;
     config.maxIterations = maxIterations;
-    config.useGPU = useGPU;
     setSolverConfig(config);
 }
 
-void StateEstimator::configureForOffline(Real tolerance, int maxIterations, bool useGPU) {
+void StateEstimator::configureForOffline(Real tolerance, int maxIterations) {
+    // CUDA-EXCLUSIVE: All operations use GPU
     math::SolverConfig config;
     config.tolerance = tolerance;
     config.maxIterations = maxIterations;
-    config.useGPU = useGPU;
     setSolverConfig(config);
 }
 

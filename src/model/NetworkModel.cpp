@@ -11,7 +11,8 @@
 
 #ifdef USE_CUDA
 #include <sle/cuda/CudaPowerFlow.h>
-#include <sle/cuda/CudaMemoryManager.h>
+#include <sle/cuda/CudaDataManager.h>
+#include <sle/cuda/CudaNetworkUtils.h>
 #include <cuda_runtime.h>
 #endif
 
@@ -38,6 +39,10 @@ struct NetworkModel::CudaMemoryPool {
     Real* d_qInjection = nullptr;
     Real* d_pFlow = nullptr;
     Real* d_qFlow = nullptr;
+    Real* d_pMW = nullptr;      // MW values (computed on GPU)
+    Real* d_qMVAR = nullptr;    // MVAR values (computed on GPU)
+    Real* d_iPU = nullptr;      // Current in p.u. (computed on GPU)
+    Real* d_iAmps = nullptr;    // Current in Amperes (computed on GPU)
     
     size_t vSize = 0;
     size_t thetaSize = 0;
@@ -51,6 +56,10 @@ struct NetworkModel::CudaMemoryPool {
     size_t qInjectionSize = 0;
     size_t pFlowSize = 0;
     size_t qFlowSize = 0;
+    size_t pMWSize = 0;
+    size_t qMVARSize = 0;
+    size_t iPUSize = 0;
+    size_t iAmpsSize = 0;
     
     ~CudaMemoryPool() {
         if (d_v) cudaFree(d_v);
@@ -65,6 +74,10 @@ struct NetworkModel::CudaMemoryPool {
         if (d_qInjection) cudaFree(d_qInjection);
         if (d_pFlow) cudaFree(d_pFlow);
         if (d_qFlow) cudaFree(d_qFlow);
+        if (d_pMW) cudaFree(d_pMW);
+        if (d_qMVAR) cudaFree(d_qMVAR);
+        if (d_iPU) cudaFree(d_iPU);
+        if (d_iAmps) cudaFree(d_iAmps);
     }
 };
 #endif
@@ -305,105 +318,32 @@ Index NetworkModel::getBranchIndex(BranchId id) const {
     return (it != branchIndexMap_.end()) ? it->second : -1;
 }
 
-void NetworkModel::buildAdmittanceMatrix(std::vector<Complex>& Y, 
-                                         std::vector<Index>& rowPtr,
-                                         std::vector<Index>& colInd) const {
-    const size_t n = buses_.size();
-    Y.clear();
-    colInd.clear();
-    
-    Y.reserve(n * 4);  // Estimate: average 4 connections per bus
-    colInd.reserve(n * 4);
-    
-    // Only resize rowPtr if size changed (avoid unnecessary reallocation)
-    if (rowPtr.size() != n + 1) {
-        rowPtr.clear();
-        rowPtr.resize(n + 1, 0);
-    } else {
-        // Zero-initialize existing vector (faster than resize)
-        std::fill(rowPtr.begin(), rowPtr.end(), 0);
-    }
-    
-    // Build structure
-    colInd.reserve(n * 4);  // Estimate: average 4 connections
-    
-    for (size_t i = 0; i < n; ++i) {
-        BusId busId = buses_[i]->getId();
-        std::vector<Index> neighbors;
-        neighbors.reserve(8);
+void NetworkModel::removeBus(BusId id) {
+    auto it = busIndexMap_.find(id);
+    if (it != busIndexMap_.end()) {
+        Index idx = it->second;
+        buses_.erase(buses_.begin() + idx);
+        busIndexMap_.erase(it);
         
-        // Self admittance (shunt)
-        neighbors.push_back(i);
-        
-        // Branches
-        for (const auto& branch : branches_) {
-            if (branch->getFromBus() == busId) {
-                Index j = getBusIndex(branch->getToBus());
-                if (j >= 0) neighbors.push_back(j);
-            } else if (branch->getToBus() == busId) {
-                Index j = getBusIndex(branch->getFromBus());
-                if (j >= 0) neighbors.push_back(j);
-            }
+        // Update indices for all buses after the removed one (indices shifted down by 1)
+        for (size_t i = idx; i < buses_.size(); ++i) {
+            BusId busId = buses_[i]->getId();
+            busIndexMap_[busId] = static_cast<Index>(i);
         }
         
-        // Sort and deduplicate
-        std::sort(neighbors.begin(), neighbors.end());
-        neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
-        
-        rowPtr[i + 1] = rowPtr[i] + neighbors.size();
-        for (Index j : neighbors) {
-            colInd.push_back(j);
-        }
-    }
-    
-    // Fill values - only resize if size changed
-    if (Y.size() != colInd.size()) {
-        Y.resize(colInd.size(), Complex(0.0, 0.0));
-    } else {
-        // Zero-initialize existing vector (faster than resize)
-        std::fill(Y.begin(), Y.end(), Complex(0.0, 0.0));
-    }
-    
-    for (size_t i = 0; i < n; ++i) {
-        BusId busId = buses_[i]->getId();
-        Index start = rowPtr[i];
-        Index end = rowPtr[i + 1];
-        
-        for (Index idx = start; idx < end; ++idx) {
-            Index j = colInd[idx];
-            
-            if (static_cast<Index>(i) == j) {
-                // Diagonal: sum of shunt admittances
-                Complex yShunt(buses_[i]->getGShunt(), buses_[i]->getBShunt());
-                
-                // Add branch charging
-                for (const auto& branch : branches_) {
-                    if (branch->getFromBus() == busId || branch->getToBus() == busId) {
-                        yShunt += Complex(0.0, branch->getB() / 2.0);
-                    }
-                }
-                
-                Y[idx] = yShunt;
+        // Update name index if bus had a name
+        for (auto itName = busNameMap_.begin(); itName != busNameMap_.end();) {
+            if (itName->second == idx) {
+                itName = busNameMap_.erase(itName);
+            } else if (itName->second > idx) {
+                --itName->second;  // Adjust index for buses after removed one
+                ++itName;
             } else {
-                // Off-diagonal: branch admittance
-                // Sum admittances of all parallel branches between buses i and j
-                BusId jBusId = buses_[j]->getId();
-                Complex ySum(0.0, 0.0);
-                for (const auto& branch : branches_) {
-                    Complex yBranch = branch->getAdmittance();
-                    Real tap = branch->getTapRatio();
-                    
-                    if (branch->getFromBus() == busId && branch->getToBus() == jBusId) {
-                        // Branch from i to j
-                        ySum = ySum - yBranch / (tap * tap);
-                    } else if (branch->getFromBus() == jBusId && branch->getToBus() == busId) {
-                        // Branch from j to i (reverse direction)
-                        ySum = ySum - yBranch / (tap * tap);
-                    }
-                }
-                Y[idx] = ySum;
+                ++itName;
             }
         }
+        
+        invalidateCaches();
     }
 }
 
@@ -472,12 +412,6 @@ void NetworkModel::removeBranch(BranchId id) {
     }
 }
 
-void NetworkModel::invalidateAdmittanceMatrix() {
-    // Mark that admittance matrix needs to be rebuilt
-    // This would be used by solvers to know when to recompute
-    invalidateCaches();
-}
-
 void NetworkModel::clear() {
     buses_.clear();
     branches_.clear();
@@ -488,8 +422,6 @@ void NetworkModel::clear() {
     // Clear cached vectors
     cachedPInjection_.clear();
     cachedQInjection_.clear();
-    cachedPFlow_.clear();
-    cachedQFlow_.clear();
     invalidateCaches();
 }
 
@@ -617,6 +549,26 @@ void NetworkModel::ensureGPUCapacity(size_t nBuses, size_t nBranches) const {
         err = cudaMalloc(&pool.d_qFlow, nBranches * sizeof(Real));
         pool.qFlowSize = (err == cudaSuccess) ? nBranches : 0;
     }
+    if (pool.pMWSize < nBranches) {
+        if (pool.d_pMW) cudaFree(pool.d_pMW);
+        err = cudaMalloc(&pool.d_pMW, nBranches * sizeof(Real));
+        pool.pMWSize = (err == cudaSuccess) ? nBranches : 0;
+    }
+    if (pool.qMVARSize < nBranches) {
+        if (pool.d_qMVAR) cudaFree(pool.d_qMVAR);
+        err = cudaMalloc(&pool.d_qMVAR, nBranches * sizeof(Real));
+        pool.qMVARSize = (err == cudaSuccess) ? nBranches : 0;
+    }
+    if (pool.iPUSize < nBranches) {
+        if (pool.d_iPU) cudaFree(pool.d_iPU);
+        err = cudaMalloc(&pool.d_iPU, nBranches * sizeof(Real));
+        pool.iPUSize = (err == cudaSuccess) ? nBranches : 0;
+    }
+    if (pool.iAmpsSize < nBranches) {
+        if (pool.d_iAmps) cudaFree(pool.d_iAmps);
+        err = cudaMalloc(&pool.d_iAmps, nBranches * sizeof(Real));
+        pool.iAmpsSize = (err == cudaSuccess) ? nBranches : 0;
+    }
 }
 
 void NetworkModel::updateDeviceData() const {
@@ -640,185 +592,23 @@ void NetworkModel::updateDeviceData() const {
         return;
     }
     
-    // Update device buses
-    cachedDeviceBuses_.clear();
-    cachedDeviceBuses_.reserve(nBuses);
-    for (const auto& bus : buses_) {
-        sle::cuda::DeviceBus db;
-        db.baseKV = bus->getBaseKV();
-        db.gShunt = bus->getGShunt();
-        db.bShunt = bus->getBShunt();
-        cachedDeviceBuses_.push_back(db);
-    }
+    // OPTIMIZATION: Use CudaNetworkUtils to build device data (eliminates duplicate code)
+    // This matches the approach used in MeasurementFunctions and JacobianMatrix
+    sle::cuda::buildDeviceBuses(*this, cachedDeviceBuses_);
+    sle::cuda::buildDeviceBranches(*this, cachedDeviceBranches_);
     
-    // Update device branches
-    cachedDeviceBranches_.clear();
-    cachedDeviceBranches_.reserve(nBranches);
-    for (const auto& branch : branches_) {
-        sle::cuda::DeviceBranch db;
-        Index fromIdx = getBusIndex(branch->getFromBus());
-        Index toIdx = getBusIndex(branch->getToBus());
-        // Validate bus indices - if invalid, set to -1 (will be handled by GPU kernel bounds checking)
-        db.fromBus = (fromIdx >= 0 && static_cast<size_t>(fromIdx) < nBuses) ? fromIdx : -1;
-        db.toBus = (toIdx >= 0 && static_cast<size_t>(toIdx) < nBuses) ? toIdx : -1;
-        db.r = branch->getR();
-        db.x = branch->getX();
-        db.b = branch->getB();
-        db.tapRatio = branch->getTapRatio();
-        db.phaseShift = branch->getPhaseShift();
-        cachedDeviceBranches_.push_back(db);
-    }
-    
-    // Build CSR format adjacency lists for GPU
-    // First, build row pointers from adjacency lists (efficient O(nBuses) operation)
-    // Only resize if size changed (avoid unnecessary reallocation)
-    if (cachedBranchFromBusRowPtr_.size() != nBuses + 1) {
-        cachedBranchFromBusRowPtr_.clear();
-        cachedBranchFromBusRowPtr_.resize(nBuses + 1, 0);
-    } else {
-        // Zero-initialize existing vector (faster than resize)
-        std::fill(cachedBranchFromBusRowPtr_.begin(), cachedBranchFromBusRowPtr_.end(), 0);
-    }
-    
-    if (cachedBranchToBusRowPtr_.size() != nBuses + 1) {
-        cachedBranchToBusRowPtr_.clear();
-        cachedBranchToBusRowPtr_.resize(nBuses + 1, 0);
-    } else {
-        // Zero-initialize existing vector (faster than resize)
-        std::fill(cachedBranchToBusRowPtr_.begin(), cachedBranchToBusRowPtr_.end(), 0);
-    }
-    
-    // Build row pointers for branchesFromBus (outgoing branches)
-    Index fromOffset = 0;
-    for (size_t i = 0; i < nBuses; ++i) {
-        cachedBranchFromBusRowPtr_[i] = fromOffset;
-        fromOffset += static_cast<Index>(branchesFromBus_[i].size());
-    }
-    cachedBranchFromBusRowPtr_[nBuses] = fromOffset;
-    
-    // Build row pointers for branchesToBus (incoming branches)
-    Index toOffset = 0;
-    for (size_t i = 0; i < nBuses; ++i) {
-        cachedBranchToBusRowPtr_[i] = toOffset;
-        toOffset += static_cast<Index>(branchesToBus_[i].size());
-    }
-    cachedBranchToBusRowPtr_[nBuses] = toOffset;
-    
-    // Build column indices from adjacency lists (in CSR order)
-    // Note: We trust that adjacency lists are correct (built in updateAdjacencyLists)
-    // but we validate for safety. If validation filters indices, CSR format will be broken,
-    // so we assert that all indices are valid (they should be if adjacency lists are correct)
-    cachedBranchFromBus_.clear();
-    cachedBranchToBus_.clear();
-    cachedBranchFromBus_.reserve(fromOffset);
-    cachedBranchToBus_.reserve(toOffset);
-    
-    // Build CSR column indices - must match row pointer offsets exactly
-    Index actualFromOffset = 0;
-    for (size_t i = 0; i < nBuses; ++i) {
-        for (Index brIdx : branchesFromBus_[i]) {
-            // Validate branch index (should always pass if adjacency lists are correct)
-            if (brIdx >= 0 && static_cast<size_t>(brIdx) < nBranches) {
-                cachedBranchFromBus_.push_back(brIdx);
-                ++actualFromOffset;
-            } else {
-                // Invalid index in adjacency list - this indicates a bug in updateAdjacencyLists
-                // For now, skip it, but CSR format will be inconsistent
-                // In production, this should be logged or asserted
-            }
-        }
-    }
-    
-    // Validate CSR consistency: actual size should match row pointer offset
-    if (actualFromOffset != fromOffset) {
-        // CSR format is inconsistent - rebuild row pointers
-        // This should not happen if adjacency lists are correct
-        #ifndef NDEBUG
-        assert(actualFromOffset == fromOffset && "CSR format inconsistency detected - indicates bug in updateAdjacencyLists");
-        #endif
-        Index correctedOffset = 0;
-        for (size_t i = 0; i < nBuses; ++i) {
-            cachedBranchFromBusRowPtr_[i] = correctedOffset;
-            for (Index brIdx : branchesFromBus_[i]) {
-                if (brIdx >= 0 && static_cast<size_t>(brIdx) < nBranches) {
-                    ++correctedOffset;
-                }
-            }
-        }
-        cachedBranchFromBusRowPtr_[nBuses] = correctedOffset;
-    }
-    
-    Index actualToOffset = 0;
-    for (size_t i = 0; i < nBuses; ++i) {
-        for (Index brIdx : branchesToBus_[i]) {
-            // Validate branch index (should always pass if adjacency lists are correct)
-            if (brIdx >= 0 && static_cast<size_t>(brIdx) < nBranches) {
-                cachedBranchToBus_.push_back(brIdx);
-                ++actualToOffset;
-            } else {
-                // Invalid index in adjacency list - this indicates a bug in updateAdjacencyLists
-                #ifndef NDEBUG
-                assert(false && "Invalid branch index in adjacency list - bug in updateAdjacencyLists");
-                #endif
-            }
-        }
-    }
-    
-    // Validate CSR consistency: actual size should match row pointer offset
-    if (actualToOffset != toOffset) {
-        // CSR format is inconsistent - rebuild row pointers
-        #ifndef NDEBUG
-        assert(actualToOffset == toOffset && "CSR format inconsistency detected - indicates bug in updateAdjacencyLists");
-        #endif
-        Index correctedOffset = 0;
-        for (size_t i = 0; i < nBuses; ++i) {
-            cachedBranchToBusRowPtr_[i] = correctedOffset;
-            for (Index brIdx : branchesToBus_[i]) {
-                if (brIdx >= 0 && static_cast<size_t>(brIdx) < nBranches) {
-                    ++correctedOffset;
-                }
-            }
-        }
-        cachedBranchToBusRowPtr_[nBuses] = correctedOffset;
-    }
+    // OPTIMIZATION: Use CudaNetworkUtils to build CSR adjacency lists (eliminates duplicate code)
+    sle::cuda::buildCSRAdjacencyLists(*this,
+                                      cachedBranchFromBus_,
+                                      cachedBranchFromBusRowPtr_,
+                                      cachedBranchToBus_,
+                                      cachedBranchToBusRowPtr_);
     
     deviceDataDirty_ = false;
 }
 #endif
 
-void NetworkModel::computeVoltEstimates(const StateVector& state, bool /* useGPU */) {
-    size_t nBuses = buses_.size();
-    
-    // Validate state vector size matches network size
-    if (state.size() != nBuses) {
-        // State vector size mismatch - this indicates a bug
-        // In debug builds, assert; in release, log and resize
-        #ifndef NDEBUG
-        assert(state.size() == nBuses && "StateVector size must match network bus count");
-        #endif
-        // For release builds, we could log this, but for now just return
-        // The caller should ensure state vector is properly sized
-        return;
-    }
-    const Real PI = 3.14159265359;
-    const Real RAD_TO_DEG = 180.0 / PI;
-    
-    // Optimized CPU path with vectorization hints
-    #ifdef USE_OPENMP
-    #pragma omp parallel for schedule(static)
-    #endif
-    for (size_t i = 0; i < nBuses; ++i) {
-        Bus* bus = buses_[i].get();
-        Real vPU = state.getVoltageMagnitude(static_cast<Index>(i));
-        Real thetaRad = state.getVoltageAngle(static_cast<Index>(i));
-        Real vKV = vPU * bus->getBaseKV();
-        Real thetaDeg = thetaRad * RAD_TO_DEG;
-        
-        bus->setVoltEstimates(vPU, vKV, thetaRad, thetaDeg);
-    }
-}
-
-void NetworkModel::computePowerInjections(const StateVector& state, bool useGPU) {
+void NetworkModel::computePowerInjections(const StateVector& state) {
     size_t nBuses = buses_.size();
     
     // Validate state vector size matches network size
@@ -836,7 +626,7 @@ void NetworkModel::computePowerInjections(const StateVector& state, bool useGPU)
     }
     
     // Compute power injections (reuse cached vectors)
-    computePowerInjections(state, cachedPInjection_, cachedQInjection_, useGPU);
+    computePowerInjections(state, cachedPInjection_, cachedQInjection_);
     
     // Store in Bus objects
     Real baseMVA = getBaseMVA();
@@ -848,63 +638,14 @@ void NetworkModel::computePowerInjections(const StateVector& state, bool useGPU)
     }
 }
 
-void NetworkModel::computePowerFlows(const StateVector& state, bool useGPU) {
-    size_t nBranches = branches_.size();
-    size_t nBuses = buses_.size();
-    
-    // Validate state vector size matches network size
-    if (state.size() != nBuses) {
-        #ifndef NDEBUG
-        assert(state.size() == nBuses && "StateVector size must match network bus count");
-        #endif
-        return;
-    }
-    
-    // Resize cached vectors only if network size changed
-    if (cachedPFlow_.size() != nBranches) {
-        cachedPFlow_.resize(nBranches);
-        cachedQFlow_.resize(nBranches);
-    }
-    
-    // Compute power flows (reuse cached vectors)
-    computePowerFlows(state, cachedPFlow_, cachedQFlow_, useGPU);
-    
-    // Store in Branch objects
-    Real baseMVA = getBaseMVA();
-    auto voltages = state.getMagnitudes();
-    
-    for (size_t i = 0; i < nBranches && i < cachedPFlow_.size(); ++i) {
-        Branch* branch = branches_[i].get();
-        Index fromIdx = getBusIndex(branch->getFromBus());
-        
-        if (fromIdx >= 0 && static_cast<size_t>(fromIdx) < voltages.size()) {
-            Real vFrom = voltages[fromIdx];
-            Real p = cachedPFlow_[i];
-            Real q = cachedQFlow_[i];
-            Real pMW = p * baseMVA;
-            Real qMVAR = q * baseMVA;
-            
-            // Compute current
-            Real iPU = branch->computeCurrentMagnitude(p, q, vFrom);
-            
-            // Convert to Amperes
-            Bus* fromBus = getBus(branch->getFromBus());
-            Real baseKV = fromBus ? fromBus->getBaseKV() : 100.0;
-            Real baseCurrent = (baseMVA * 1000.0) / (std::sqrt(3.0) * baseKV);
-            Real iAmps = iPU * baseCurrent;
-            
-            branch->setPowerFlow(p, q, pMW, qMVAR, iAmps, iPU);
-        }
-    }
-}
-
 void NetworkModel::computePowerInjections(const StateVector& state,
                                           std::vector<Real>& pInjection, 
                                           std::vector<Real>& qInjection,
-                                          bool useGPU) const {
+                                          sle::cuda::CudaDataManager* dataManager) const {
+    // CUDA-EXCLUSIVE: All computations on GPU
+    // OPTIMIZED: Use shared CudaDataManager if provided (reuses GPU data), otherwise use local pool
     size_t nBuses = buses_.size();
     size_t nBranches = branches_.size();
-    (void)useGPU;  // May be used in GPU path
     
     // Handle empty network
     if (nBuses == 0) {
@@ -926,213 +667,141 @@ void NetworkModel::computePowerInjections(const StateVector& state,
     std::fill(qInjection.begin(), qInjection.end(), 0.0);
     
 #ifdef USE_CUDA
-    if (useGPU && gpuMemoryPool_) {
+    // OPTIMIZATION: Use shared CudaDataManager if provided (eliminates duplicate allocations)
+    if (dataManager && dataManager->isInitialized()) {
+        // Use shared data manager - reuses GPU data already allocated
         try {
-            // Ensure GPU memory pool has capacity
-            ensureGPUCapacity(nBuses, nBranches);
-            auto& pool = *gpuMemoryPool_;
+            // Update state in shared data manager
+            const auto& v = state.getMagnitudes();
+            const auto& theta = state.getAngles();
+            dataManager->updateState(v.data(), theta.data(), static_cast<Index>(nBuses));
             
-                // Check if allocations succeeded (including CSR row pointers)
-                if (!pool.d_v || !pool.d_theta || !pool.d_buses || !pool.d_branches ||
-                    !pool.d_branchFromBus || !pool.d_branchToBus ||
-                    !pool.d_branchFromBusRowPtr || !pool.d_branchToBusRowPtr ||
-                    !pool.d_pInjection || !pool.d_qInjection) {
-                    useGPU = false;  // Fall back to CPU
-                } else {
-                    // Update cached device data if needed (builds CSR format)
-                    updateDeviceData();
-                    
-                    // Get state vectors
-                    std::vector<Real> v = state.getMagnitudes();
-                    std::vector<Real> theta = state.getAngles();
-                    
-                    // Copy to device (reuse existing allocations)
-                    cudaMemcpy(pool.d_v, v.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
-                    cudaMemcpy(pool.d_theta, theta.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
-                    cudaMemcpy(pool.d_buses, cachedDeviceBuses_.data(), 
-                              nBuses * sizeof(sle::cuda::DeviceBus), cudaMemcpyHostToDevice);
-                    cudaMemcpy(pool.d_branches, cachedDeviceBranches_.data(), 
-                              nBranches * sizeof(sle::cuda::DeviceBranch), cudaMemcpyHostToDevice);
-                    // Copy CSR format: column indices and row pointers
-                    // Validate sizes before copying to prevent buffer overflows
-                    size_t fromCSRSize = cachedBranchFromBus_.size();
-                    size_t toCSRSize = cachedBranchToBus_.size();
-                    
-                    // Validate CSR sizes match allocated memory
-                    if (fromCSRSize > pool.branchFromBusSize || toCSRSize > pool.branchToBusSize) {
-                        // Allocation too small - fall back to CPU
-                        useGPU = false;
-                    } else {
-                        // Safe to copy - sizes are valid
-                        if (fromCSRSize > 0) {
-                            cudaMemcpy(pool.d_branchFromBus, cachedBranchFromBus_.data(), 
-                                      fromCSRSize * sizeof(Index), cudaMemcpyHostToDevice);
-                        }
-                        if (toCSRSize > 0) {
-                            cudaMemcpy(pool.d_branchToBus, cachedBranchToBus_.data(), 
-                                      toCSRSize * sizeof(Index), cudaMemcpyHostToDevice);
-                        }
-                        cudaMemcpy(pool.d_branchFromBusRowPtr, cachedBranchFromBusRowPtr_.data(), 
-                                  (nBuses + 1) * sizeof(Index), cudaMemcpyHostToDevice);
-                        cudaMemcpy(pool.d_branchToBusRowPtr, cachedBranchToBusRowPtr_.data(), 
-                                  (nBuses + 1) * sizeof(Index), cudaMemcpyHostToDevice);
-                        
-                        // Launch GPU kernel with CSR format (O(avg_degree) complexity)
-                        sle::cuda::computeAllPowerInjectionsGPU(
-                            pool.d_v, pool.d_theta, pool.d_buses, pool.d_branches,
-                            pool.d_branchFromBus, pool.d_branchFromBusRowPtr,
-                            pool.d_branchToBus, pool.d_branchToBusRowPtr,
-                            pool.d_pInjection, pool.d_qInjection,
-                            static_cast<Index>(nBuses), static_cast<Index>(nBranches));
-                        
-                        // Copy back (async could be used here for better performance)
-                        cudaMemcpy(pInjection.data(), pool.d_pInjection, 
-                                  nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
-                        cudaMemcpy(qInjection.data(), pool.d_qInjection, 
-                                  nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
-                        
-                        return;  // Success, return early
-                    }
-            }
-        } catch (...) {
-            // Fall back to CPU if GPU fails
-            useGPU = false;
+            // Update network data if needed (builds CSR format)
+            updateDeviceData();
+            
+            // Update network data in shared data manager
+            dataManager->updateNetwork(
+                cachedDeviceBuses_.data(),
+                cachedDeviceBranches_.data(),
+                static_cast<Index>(nBuses),
+                static_cast<Index>(nBranches));
+            
+            // Update adjacency lists in shared data manager
+            dataManager->updateAdjacency(
+                cachedBranchFromBus_.data(),
+                cachedBranchFromBusRowPtr_.data(),
+                cachedBranchToBus_.data(),
+                cachedBranchToBusRowPtr_.data(),
+                static_cast<Index>(nBuses),
+                static_cast<Index>(cachedBranchFromBus_.size()),
+                static_cast<Index>(cachedBranchToBus_.size()));
+            
+            // Launch GPU kernel using shared data manager pointers
+            sle::cuda::computeAllPowerInjectionsGPU(
+                dataManager->getStateV(),
+                dataManager->getStateTheta(),
+                dataManager->getBuses(),
+                dataManager->getBranches(),
+                dataManager->getBranchFromBus(),
+                dataManager->getBranchFromBusRowPtr(),
+                dataManager->getBranchToBus(),
+                dataManager->getBranchToBusRowPtr(),
+                dataManager->getPInjection(),
+                dataManager->getQInjection(),
+                static_cast<Index>(nBuses),
+                static_cast<Index>(nBranches));
+            
+            // Copy back results
+            cudaMemcpy(pInjection.data(), dataManager->getPInjection(), 
+                      nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
+            cudaMemcpy(qInjection.data(), dataManager->getQInjection(), 
+                      nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
+            
+            return;  // Success using shared data manager
+        } catch (const std::exception& e) {
+            // Fall through to local pool if shared manager fails
+            // (for backward compatibility)
         }
     }
+    
+    // Fallback: Use local memory pool (for backward compatibility or when dataManager not provided)
+    // CUDA-EXCLUSIVE: GPU required
+    if (!gpuMemoryPool_) {
+        throw std::runtime_error("CUDA GPU memory pool not initialized");
+    }
+    
+    try {
+        // Ensure GPU memory pool has capacity
+        ensureGPUCapacity(nBuses, nBranches);
+        auto& pool = *gpuMemoryPool_;
+        
+        // Check if allocations succeeded (including CSR row pointers)
+        if (!pool.d_v || !pool.d_theta || !pool.d_buses || !pool.d_branches ||
+            !pool.d_branchFromBus || !pool.d_branchToBus ||
+            !pool.d_branchFromBusRowPtr || !pool.d_branchToBusRowPtr ||
+            !pool.d_pInjection || !pool.d_qInjection) {
+            throw std::runtime_error("CUDA memory allocation failed for power injections");
+        }
+        
+        // Update cached device data if needed (builds CSR format)
+        updateDeviceData();
+        
+        // Get state vectors
+        std::vector<Real> v = state.getMagnitudes();
+        std::vector<Real> theta = state.getAngles();
+        
+        // Copy to device (reuse existing allocations)
+        cudaMemcpy(pool.d_v, v.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
+        cudaMemcpy(pool.d_theta, theta.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
+        cudaMemcpy(pool.d_buses, cachedDeviceBuses_.data(), 
+                  nBuses * sizeof(sle::cuda::DeviceBus), cudaMemcpyHostToDevice);
+        cudaMemcpy(pool.d_branches, cachedDeviceBranches_.data(), 
+                  nBranches * sizeof(sle::cuda::DeviceBranch), cudaMemcpyHostToDevice);
+        
+        // Copy CSR format: column indices and row pointers
+        size_t fromCSRSize = cachedBranchFromBus_.size();
+        size_t toCSRSize = cachedBranchToBus_.size();
+        
+        // Validate CSR sizes match allocated memory
+        if (fromCSRSize > pool.branchFromBusSize || toCSRSize > pool.branchToBusSize) {
+            throw std::runtime_error("CUDA CSR buffer size mismatch for power injections");
+        }
+        
+        // Safe to copy - sizes are valid
+        if (fromCSRSize > 0) {
+            cudaMemcpy(pool.d_branchFromBus, cachedBranchFromBus_.data(), 
+                      fromCSRSize * sizeof(Index), cudaMemcpyHostToDevice);
+        }
+        if (toCSRSize > 0) {
+            cudaMemcpy(pool.d_branchToBus, cachedBranchToBus_.data(), 
+                      toCSRSize * sizeof(Index), cudaMemcpyHostToDevice);
+        }
+        cudaMemcpy(pool.d_branchFromBusRowPtr, cachedBranchFromBusRowPtr_.data(), 
+                  (nBuses + 1) * sizeof(Index), cudaMemcpyHostToDevice);
+        cudaMemcpy(pool.d_branchToBusRowPtr, cachedBranchToBusRowPtr_.data(), 
+                  (nBuses + 1) * sizeof(Index), cudaMemcpyHostToDevice);
+        
+        // Launch GPU kernel with CSR format (O(avg_degree) complexity)
+        sle::cuda::computeAllPowerInjectionsGPU(
+            pool.d_v, pool.d_theta, pool.d_buses, pool.d_branches,
+            pool.d_branchFromBus, pool.d_branchFromBusRowPtr,
+            pool.d_branchToBus, pool.d_branchToBusRowPtr,
+            pool.d_pInjection, pool.d_qInjection,
+            static_cast<Index>(nBuses), static_cast<Index>(nBranches));
+        
+        // Copy back (async could be used here for better performance)
+        cudaMemcpy(pInjection.data(), pool.d_pInjection, 
+                  nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
+        cudaMemcpy(qInjection.data(), pool.d_qInjection, 
+                  nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("CUDA power injection computation failed: ") + e.what());
+    }
+#else
+    throw std::runtime_error("CUDA is required for NetworkModel::computePowerInjections()");
 #endif
-    
-    // CPU fallback - optimized with adjacency lists and vectorization
-    updateAdjacencyLists();
-    
-    #ifdef USE_OPENMP
-    #pragma omp parallel for schedule(static)
-    #endif
-    for (size_t i = 0; i < nBuses; ++i) {
-        const Bus* bus = buses_[i].get();
-        Real v = state.getVoltageMagnitude(static_cast<Index>(i));
-        Real v2 = v * v;  // Reuse v^2 computation
-        // Note: theta not needed for shunt-only contribution calculation
-        
-        // Shunt contribution
-        pInjection[i] = v2 * bus->getGShunt();
-        qInjection[i] = -v2 * bus->getBShunt();
-        
-        // Branch contributions (outgoing) - use cached adjacency list
-        for (Index brIdx : branchesFromBus_[i]) {
-            // Validate branch index before accessing (defensive programming)
-            if (brIdx >= 0 && static_cast<size_t>(brIdx) < branches_.size()) {
-                const Branch* branch = branches_[brIdx].get();
-                Index toIdx = getBusIndex(branch->getToBus());
-                if (toIdx >= 0) {
-                    Real pFlow, qFlow;
-                    branch->computePowerFlow(state, static_cast<Index>(i), toIdx, pFlow, qFlow);
-                    pInjection[i] += pFlow;
-                    qInjection[i] += qFlow;
-                }
-            }
-        }
-        
-        // Branch contributions (incoming - reverse direction)
-        for (Index brIdx : branchesToBus_[i]) {
-            // Validate branch index before accessing (defensive programming)
-            if (brIdx >= 0 && static_cast<size_t>(brIdx) < branches_.size()) {
-                const Branch* branch = branches_[brIdx].get();
-                Index fromIdx = getBusIndex(branch->getFromBus());
-                if (fromIdx >= 0) {
-                    Real pFlow, qFlow;
-                    branch->computePowerFlow(state, fromIdx, static_cast<Index>(i), pFlow, qFlow);
-                    pInjection[i] -= pFlow;  // Reverse direction
-                    qInjection[i] -= qFlow;
-                }
-            }
-        }
-    }
 }
 
-void NetworkModel::computePowerFlows(const StateVector& state,
-                                     std::vector<Real>& pFlow, 
-                                     std::vector<Real>& qFlow,
-                                     bool useGPU) const {
-    (void)useGPU;  // May be used in GPU path
-    size_t nBranches = branches_.size();
-    
-    // Handle empty network
-    if (nBranches == 0) {
-        pFlow.clear();
-        qFlow.clear();
-        return;
-    }
-    
-    // Resize output vectors if needed (reuse capacity if already allocated)
-    if (pFlow.size() != nBranches) {
-        pFlow.resize(nBranches);
-    }
-    if (qFlow.size() != nBranches) {
-        qFlow.resize(nBranches);
-    }
-    
-    // Zero-initialize (faster than assign for already-sized vectors)
-    std::fill(pFlow.begin(), pFlow.end(), 0.0);
-    std::fill(qFlow.begin(), qFlow.end(), 0.0);
-    
-#ifdef USE_CUDA
-    if (useGPU && gpuMemoryPool_) {
-        try {
-            size_t nBuses = buses_.size();
-            ensureGPUCapacity(nBuses, nBranches);
-            auto& pool = *gpuMemoryPool_;
-            
-            if (!pool.d_v || !pool.d_theta || !pool.d_branches || 
-                !pool.d_pFlow || !pool.d_qFlow) {
-                useGPU = false;
-            } else {
-                // Update cached device data if needed
-                updateDeviceData();
-                
-                // Get state vectors
-                std::vector<Real> v = state.getMagnitudes();
-                std::vector<Real> theta = state.getAngles();
-                
-                // Copy to device (reuse existing allocations)
-                cudaMemcpy(pool.d_v, v.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
-                cudaMemcpy(pool.d_theta, theta.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
-                cudaMemcpy(pool.d_branches, cachedDeviceBranches_.data(), 
-                          nBranches * sizeof(sle::cuda::DeviceBranch), cudaMemcpyHostToDevice);
-                
-                // Launch GPU kernel
-                sle::cuda::computeAllPowerFlowsGPU(
-                    pool.d_v, pool.d_theta, pool.d_branches,
-                    pool.d_pFlow, pool.d_qFlow,
-                    static_cast<Index>(nBranches), static_cast<Index>(nBuses));
-                
-                // Copy back
-                cudaMemcpy(pFlow.data(), pool.d_pFlow, 
-                          nBranches * sizeof(Real), cudaMemcpyDeviceToHost);
-                cudaMemcpy(qFlow.data(), pool.d_qFlow, 
-                          nBranches * sizeof(Real), cudaMemcpyDeviceToHost);
-                
-                return;  // Success, return early
-            }
-        } catch (...) {
-            useGPU = false;
-        }
-    }
-#endif
-    
-    // CPU fallback - optimized with vectorization
-    #ifdef USE_OPENMP
-    #pragma omp parallel for schedule(static)
-    #endif
-    for (size_t i = 0; i < nBranches; ++i) {
-        const Branch* branch = branches_[i].get();
-        Index fromIdx = getBusIndex(branch->getFromBus());
-        Index toIdx = getBusIndex(branch->getToBus());
-        
-        if (fromIdx >= 0 && toIdx >= 0) {
-            branch->computePowerFlow(state, fromIdx, toIdx, pFlow[i], qFlow[i]);
-        }
-    }
-}
 
 } // namespace model
 } // namespace sle

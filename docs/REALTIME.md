@@ -10,7 +10,7 @@ The State Estimation system supports real-time operation where network models an
 
 The `TelemetryProcessor` handles asynchronous measurement updates:
 
-- Thread-safe update queue
+- Update queue
 - Background processing thread
 - Automatic timestamp tracking
 - Batch update support
@@ -22,7 +22,6 @@ The `StateEstimator` supports:
 - Incremental estimation (faster convergence using previous state)
 - Model update detection
 - Telemetry update detection
-- Thread-safe estimation
 
 ## Usage Example
 

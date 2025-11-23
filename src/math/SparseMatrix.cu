@@ -207,6 +207,18 @@ void SparseMatrix::multiplyVectorTranspose(const Real* x, Real* y, cusparseHandl
 #endif
 }
 
+void SparseMatrix::buildFromDevicePointers(Real* d_values, Index* d_rowPtr, Index* d_colInd,
+                                            Index nRows, Index nCols, Index nnz) {
+    clear(); // Free any existing memory
+    
+    d_values_ = d_values;
+    d_rowPtr_ = d_rowPtr;
+    d_colInd_ = d_colInd;
+    nRows_ = nRows;
+    nCols_ = nCols;
+    nnz_ = nnz;
+}
+
 void SparseMatrix::clear() {
     freeDeviceMemory();
     nRows_ = 0;

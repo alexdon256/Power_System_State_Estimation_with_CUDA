@@ -32,6 +32,11 @@ public:
                       const std::vector<Index>& colInd,
                       Index nRows, Index nCols);
     
+    // Build from device pointers (takes ownership, avoids host-device copy)
+    // WARNING: Do not free the pointers after calling this - SparseMatrix owns them
+    void buildFromDevicePointers(Real* d_values, Index* d_rowPtr, Index* d_colInd,
+                                 Index nRows, Index nCols, Index nnz);
+    
     // Get device pointers
     Real* getValues() { return d_values_; }
     Index* getRowPtr() { return d_rowPtr_; }

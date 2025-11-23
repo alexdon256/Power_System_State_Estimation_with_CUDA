@@ -80,10 +80,7 @@ estimator.configureForRealTime(1e-5, 15, true);
 auto wlsResult = estimator.estimateIncremental();  // Every cycle
 if (cycleCount % 5 == 0) {
     robustEstimator.estimate(...);  // Periodic
-    // Compute values from robust estimation
-    network->computeVoltEstimates(*robustResult.state, useGPU);
-    network->computePowerInjections(*robustResult.state, useGPU);
-    network->computePowerFlows(*robustResult.state, useGPU);
+    // All values are automatically computed by estimate() (GPU-accelerated)
 }
 ```
 
@@ -103,10 +100,7 @@ auto wlsResult = estimator.estimate();
 auto robustState = std::make_unique<StateVector>(*wlsResult.state);
 auto robustResult = robustEstimator.estimate(*robustState, *network, *telemetry);
 
-// Step 3: Compute values from robust estimation
-network->computeVoltEstimates(*robustResult.state, useGPU);
-network->computePowerInjections(*robustResult.state, useGPU);
-network->computePowerFlows(*robustResult.state, useGPU);
+// Step 3: All values are automatically computed by estimate() (GPU-accelerated)
 
 // Also includes: load flow, optimal placement, multi-area, WLS vs Robust comparison
 ```
@@ -243,7 +237,7 @@ if (vPU < 0.95 || vPU > 1.05) {
 ```cpp
 // Real-time monitoring during update loop
 if (incResult.state) {
-    network->computeVoltEstimates(*incResult.state, useGPU);
+    // All values are automatically computed by estimateIncremental() (GPU-accelerated)
     // Check violations in real-time
 }
 ```

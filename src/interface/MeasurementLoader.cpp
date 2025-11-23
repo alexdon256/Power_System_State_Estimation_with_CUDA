@@ -91,25 +91,6 @@ std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromJSON(
     return telemetry;
 }
 
-void MeasurementLoader::addVirtualMeasurements(model::TelemetryData& telemetry,
-                                               const model::NetworkModel& network) {
-    auto buses = network.getBuses();
-    
-    for (auto* bus : buses) {
-        if (bus->isZeroInjection()) {
-            // Add zero injection constraint: P = 0, Q = 0
-            auto pMeas = std::make_unique<model::MeasurementModel>(
-                MeasurementType::VIRTUAL, 0.0, 1e-6, "VIRTUAL_P");
-            pMeas->setLocation(bus->getId());
-            telemetry.addMeasurement(std::move(pMeas));
-            
-            auto qMeas = std::make_unique<model::MeasurementModel>(
-                MeasurementType::VIRTUAL, 0.0, 1e-6, "VIRTUAL_Q");
-            qMeas->setLocation(bus->getId());
-            telemetry.addMeasurement(std::move(qMeas));
-        }
-    }
-}
 
 void MeasurementLoader::addPseudoMeasurements(model::TelemetryData& telemetry,
                                               const model::NetworkModel& network,

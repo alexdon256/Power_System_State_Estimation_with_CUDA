@@ -153,7 +153,7 @@ void LoadFlow::computeMismatches(const NetworkModel& network, const StateVector&
     
     // Compute power injections once and store directly in bus objects
     model::NetworkModel& modNetwork = const_cast<model::NetworkModel&>(network);
-    modNetwork.computePowerInjections(state, config_.useGPU);
+    modNetwork.computePowerInjections(state);
     
     // Compute mismatches: P_mismatch = P_gen - P_load - P_injection
     //                     Q_mismatch = Q_gen - Q_load - Q_injection

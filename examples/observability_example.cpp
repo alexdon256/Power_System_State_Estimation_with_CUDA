@@ -8,7 +8,7 @@
  * This example demonstrates observability analysis and restoration techniques:
  * 1. Check if system is fully observable (can estimate all bus voltages)
  * 2. Identify non-observable buses (buses that cannot be estimated)
- * 3. Restore observability using virtual measurements (zero injection constraints)
+ * 3. Restore observability using pseudo measurements (load forecasts)
  * 4. Restore observability using pseudo measurements (load forecasts)
  * 5. Find optimal measurement placement for observability
  * 
@@ -16,13 +16,12 @@
  * - A system is observable if the measurement Jacobian matrix has full rank
  * - Observable buses: Can be estimated from available measurements
  * - Non-observable buses: Cannot be estimated (need additional measurements)
- * - Virtual measurements: Zero injection constraints (Kirchhoff's current law)
  * - Pseudo measurements: Forecasted/estimated values (less accurate than real measurements)
  * 
  * Use cases:
  * - Pre-estimation validation (ensure system can be estimated)
  * - Measurement planning (determine where to place new meters)
- * - Observability restoration (add virtual/pseudo measurements automatically)
+ * - Observability restoration (add pseudo measurements automatically)
  * - Redundancy analysis (identify critical measurements)
  */
 
@@ -30,7 +29,6 @@
 #include <sle/interface/ModelLoader.h>
 #include <sle/interface/MeasurementLoader.h>
 #include <sle/observability/ObservabilityAnalyzer.h>
-#include <sle/measurements/VirtualMeasurementGenerator.h>
 #include <sle/measurements/PseudoMeasurementGenerator.h>
 #include <iostream>
 
@@ -70,7 +68,7 @@ int main() {
         // STEP 3: Identify Non-Observable Buses
         // ========================================================================
         // If system is not observable, identify which buses cannot be estimated
-        // These buses need additional measurements or virtual/pseudo measurements
+        // These buses need additional measurements or pseudo measurements
         if (!observable) {
             std::cout << "Non-observable buses:\n";
             // Get list of bus IDs that cannot be estimated
@@ -82,32 +80,9 @@ int main() {
             std::cout << "\n";
             
             // ========================================================================
-            // STEP 4: Restore Observability with Virtual Measurements
+            // STEP 4: Restore Observability with Pseudo Measurements (if needed)
             // ========================================================================
-            // Virtual measurements enforce physical constraints:
-            // 1. Zero injection: Sum of injections = 0 at buses with no load/generation
-            //    Based on Kirchhoff's current law: Σ(P_injection) = 0, Σ(Q_injection) = 0
-            // 2. Reference bus: Slack bus angle = 0.0 (reference angle)
-            //
-            // Virtual measurements have very high weight (low stdDev) to enforce constraints exactly
-            // They don't require physical meters - they're mathematical constraints
-            std::cout << "Adding virtual measurements (zero injection)...\n";
-            // Generate zero injection constraints for buses with no load and no generation
-            sle::measurements::VirtualMeasurementGenerator::generateZeroInjection(
-                *telemetry, *network);
-            // Generate reference bus constraint (slack bus angle = 0.0)
-            sle::measurements::VirtualMeasurementGenerator::generateReferenceBus(
-                *telemetry, *network);
-            
-            // Re-check observability after adding virtual measurements
-            observable = analyzer.isFullyObservable(*network, *telemetry);
-            std::cout << "After virtual measurements: " 
-                      << (observable ? "Observable" : "Still not observable") << "\n\n";
-            
-            // ========================================================================
-            // STEP 5: Restore Observability with Pseudo Measurements (if needed)
-            // ========================================================================
-            // If virtual measurements aren't sufficient, use pseudo measurements
+            // If system is still not observable, use pseudo measurements
             // Pseudo measurements are forecasted/estimated values:
             // - Load forecasts from historical patterns
             // - Estimated values from similar buses

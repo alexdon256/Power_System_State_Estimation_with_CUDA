@@ -32,13 +32,11 @@ Main class for state estimation operations.
 - **Description:** Set the power system network model (topology, buses, branches)
 - **Parameters:** `network` - Shared pointer to NetworkModel
 - **Usage:** Called once at initialization or when network topology changes
-- **Thread Safety:** Thread-safe (uses mutex)
 
 #### `void setTelemetryData(std::shared_ptr<model::TelemetryData> telemetry)`
 - **Description:** Set the telemetry measurements data
 - **Parameters:** `telemetry` - Shared pointer to TelemetryData
 - **Usage:** Called once at initialization or when measurements are reloaded
-- **Thread Safety:** Thread-safe (uses mutex)
 
 #### `void setSolverConfig(const math::SolverConfig& config)`
 - **Description:** Configure the Newton-Raphson solver parameters
@@ -917,7 +915,6 @@ sle::io::ComparisonReport::writeReport("report.txt", comparisons);
 
 - All getters are **const** methods (do not modify object state)
 - Setters may trigger internal updates (e.g., admittance matrix rebuild)
-- Thread safety: StateEstimator methods are thread-safe
 - Memory: Use shared pointers for network and telemetry data
 - Indexing: Bus indices are 0-based, Bus IDs are 1-based (IEEE format)
 

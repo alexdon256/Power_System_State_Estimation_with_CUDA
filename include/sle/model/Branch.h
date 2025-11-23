@@ -46,19 +46,7 @@ public:
     
     Complex getAdmittance() const;
     
-    // Compute power flow from estimated state
-    // Returns power flow from fromBus to toBus
-    void computePowerFlow(const StateVector& state, Index fromBusIdx, Index toBusIdx,
-                         Real& pFlow, Real& qFlow) const;
-    
-    // Get power flow in physical units (MW, MVAR)
-    void computePowerFlowMW(const StateVector& state, Index fromBusIdx, Index toBusIdx,
-                           Real baseMVA, Real& pMW, Real& qMVAR) const;
-    
-    // Compute current magnitude from power flow
-    Real computeCurrentMagnitude(Real pFlow, Real qFlow, Real vFrom) const;
-    
-    // Getters for computed power flows (set by NetworkModel::computePowerFlows)
+    // Getters for computed power flows (set by Solver::storeComputedValues)
     Real getPFlow() const { return pFlow_; }           // P flow in p.u.
     Real getQFlow() const { return qFlow_; }          // Q flow in p.u.
     Real getPMW() const { return pMW_; }              // P flow in MW
@@ -82,7 +70,7 @@ private:
     Real tapRatio_;    // Transformer tap ratio (1.0 for lines)
     Real phaseShift_;  // Phase shift angle (radians)
     
-    // Computed values (set by NetworkModel computePowerFlows)
+    // Computed values (set by Solver::storeComputedValues)
     Real pFlow_;       // P flow in p.u.
     Real qFlow_;       // Q flow in p.u.
     Real pMW_;         // P flow in MW

@@ -41,7 +41,6 @@ enum class MeasurementType {
     I_MAGNITUDE,      // Current magnitude
     V_PHASOR,         // Voltage phasor (PMU)
     I_PHASOR,         // Current phasor (PMU)
-    VIRTUAL,          // Virtual measurement (zero injection)
     PSEUDO            // Pseudo measurement (forecast)
 };
 

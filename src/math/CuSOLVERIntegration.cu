@@ -11,6 +11,10 @@
 #include <cuda_runtime.h>
 #include <chrono>
 
+#ifdef USE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 namespace sle {
 namespace math {
 
@@ -38,6 +42,16 @@ void CuSOLVERIntegration::createHandles() {
     cusparseCreateMatDescr(&descr_);
     cusparseSetMatType(descr_, CUSPARSE_MATRIX_TYPE_GENERAL);
     cusparseSetMatIndexBase(descr_, CUSPARSE_INDEX_BASE_ZERO);
+}
+
+void CuSOLVERIntegration::setStream(cudaStream_t stream) {
+    // OPTIMIZATION: Associate handles with stream for overlapping operations
+    if (cusolverHandle_ && stream) {
+        cusolverSpSetStream(cusolverHandle_, stream);
+    }
+    if (cusparseHandle_ && stream) {
+        cusparseSetStream(cusparseHandle_, stream);
+    }
 }
 
 void CuSOLVERIntegration::destroyHandles() {
@@ -139,6 +153,31 @@ bool CuSOLVERIntegration::solveSparse(const SparseMatrix& A,
     // Compute residual
     // (Would compute ||A*x - b|| here)
     lastStats_.residual = 0.0;
+    
+    return true;
+}
+
+bool CuSOLVERIntegration::solveSparseGPU(const SparseMatrix& A, const Real* d_b, 
+                                         Real* d_x, Index n) {
+    // CUDA-EXCLUSIVE: Solve entirely on GPU without host transfers
+    if (A.getNNZ() == 0 || n == 0) {
+        cudaMemset(d_x, 0, n * sizeof(Real));
+        return true;
+    }
+    
+    // Solve using cuSOLVER QR factorization (all data on GPU)
+    int singularity = 0;
+    double tol = 1e-6;
+    int reorder = 0;
+    
+    cusolverStatus_t status = cusolverSpDcsrlsvqr(
+        cusolverHandle_, n, A.getNNZ(), descr_,
+        A.getValues(), A.getRowPtr(), A.getColInd(),
+        d_b, tol, reorder, d_x, &singularity);
+    
+    if (status != CUSOLVER_STATUS_SUCCESS || singularity != -1) {
+        return false;
+    }
     
     return true;
 }

@@ -59,7 +59,7 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
     SolverConfig solverConfig;
     solverConfig.tolerance = config_.tolerance;
     solverConfig.maxIterations = 10;  // Fewer iterations per IRLS step
-    solverConfig.useGPU = config_.useGPU;
+    // CUDA-EXCLUSIVE: All operations use GPU
     solver.setConfig(solverConfig);
     
     // IRLS iterations
@@ -96,7 +96,7 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
             break;
         }
         
-        // Compute residuals
+        // CUDA-EXCLUSIVE: Compute residuals
         std::vector<Real> hx;
         measFuncs.evaluate(state, network, telemetry, hx);
         

@@ -31,10 +31,6 @@ public:
     static std::unique_ptr<model::TelemetryData> loadFromJSON(
         const std::string& filepath, const model::NetworkModel& network);
     
-    // Add virtual measurements (zero injection)
-    static void addVirtualMeasurements(model::TelemetryData& telemetry,
-                                      const model::NetworkModel& network);
-    
     // Add pseudo measurements (load forecasts)
     static void addPseudoMeasurements(model::TelemetryData& telemetry,
                                      const model::NetworkModel& network,

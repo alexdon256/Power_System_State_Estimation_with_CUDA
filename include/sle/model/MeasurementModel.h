@@ -44,7 +44,6 @@ public:
     void setTimestamp(int64_t timestamp) { timestamp_ = timestamp; }
     int64_t getTimestamp() const { return timestamp_; }
     
-    bool isVirtual() const { return type_ == MeasurementType::VIRTUAL; }
     bool isPseudo() const { return type_ == MeasurementType::PSEUDO; }
     
 private:

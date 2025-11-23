@@ -113,7 +113,7 @@ auto measurement = std::make_unique<MeasurementModel>(
 measurement->setLocation(1);  // Bus ID
 telemetry->addMeasurement(std::move(measurement));
 
-// Via TelemetryProcessor (thread-safe, queued)
+// Via TelemetryProcessor (queued)
 TelemetryUpdate update;
 update.deviceId = "PMU_001";
 update.type = MeasurementType::V_MAGNITUDE;
@@ -153,7 +153,7 @@ All previously missing functionality has been implemented:
 **Status:** Fully implemented
 
 ```cpp
-// TelemetryProcessor (thread-safe, O(1) average-case lookup)
+// TelemetryProcessor (O(1) average-case lookup)
 processor.removeMeasurement("PMU_001");
 
 // TelemetryData (direct access, O(1) average-case lookup)
