@@ -329,6 +329,12 @@ __global__ void evaluateMeasurementsKernel(
                     }
                 }
                 break;
+
+            case 6:  // V_ANGLE
+                if (location >= 0) {
+                    value = theta[location];
+                }
+                break;
                 
             default:
                 value = 0.0;
@@ -458,6 +464,12 @@ __global__ void computeMeasurementsFusedKernel(
                             }
                         }
                     }
+                }
+                break;
+
+            case 6:  // V_ANGLE
+                if (location >= 0) {
+                    value = theta[location];
                 }
                 break;
                 
@@ -1107,6 +1119,23 @@ __global__ void computeJacobianKernelCached(const Real* v, const Real* theta,
         } else if (type == 5) { // I_MAGNITUDE
             for (Index i = rowStart; i < rowEnd; ++i) {
                 jacobianValues[i] = 0.0;  // Placeholder
+            }
+        } else if (type == 6) { // V_ANGLE
+            Index busIdx = measurementLocations[measIdx];
+            if (busIdx < 0 || busIdx >= nBuses) {
+                for (Index i = rowStart; i < rowEnd; ++i) {
+                    jacobianValues[i] = 0.0;
+                }
+                return;
+            }
+            
+            for (Index i = rowStart; i < rowEnd; ++i) {
+                Index col = jacobianColInd[i];
+                if (col == busIdx) {
+                    jacobianValues[i] = 1.0;
+                } else {
+                    jacobianValues[i] = 0.0;
+                }
             }
         }
     }

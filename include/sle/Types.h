@@ -39,6 +39,7 @@ enum class MeasurementType {
     Q_INJECTION,      // Reactive power injection
     V_MAGNITUDE,      // Voltage magnitude
     I_MAGNITUDE,      // Current magnitude
+    V_ANGLE,          // Voltage angle
     V_PHASOR,         // Voltage phasor (PMU)
     I_PHASOR,         // Current phasor (PMU)
     PSEUDO            // Pseudo measurement (forecast)

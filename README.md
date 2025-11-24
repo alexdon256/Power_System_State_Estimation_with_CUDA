@@ -12,6 +12,8 @@ A comprehensive C/C++ CUDA-accelerated power system State Estimation program tha
 - **CUDA Acceleration**: GPU-accelerated parallel computation with optimized kernels
   - **10-50x speedup** for large systems (10,000+ buses)
   - Real-time capable: 100-500 ms per cycle for 10K buses
+  - **Zero-Copy Topology Reuse**: Minimizes PCIe transfers for static topologies
+  - **Asynchronous Pipeline**: Overlaps computation and data transfer
 - **cuSOLVER Integration**: Full sparse linear system solving
 - **PMU Support**: Complete C37.118 phasor measurement unit support
 - **Template Metaprogramming**: Compile-time optimizations for maximum performance

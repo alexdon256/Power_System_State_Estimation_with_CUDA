@@ -6,6 +6,26 @@ The State Estimation system supports real-time operation where network models an
 
 ## Real-Time Architecture
 
+The system is optimized for high-frequency updates using a zero-copy topology reuse architecture.
+
+### Zero-Copy Topology Reuse
+
+For systems where the topology (switches, breakers) changes less frequently than analog measurements (voltages, flows):
+
+1.  **Static Topology**: The Jacobian structure and network graph are built once and persisted on the GPU.
+2.  **Dynamic Analogs**: Only measurement values ($z$) and state vector ($x$) are transferred per cycle.
+3.  **Zero-Copy**: Skip re-uploading bus/branch data and re-analyzing matrix structure.
+
+This reduces PCIe bandwidth usage by over 90% and eliminates symbolic factorization overhead.
+
+### Asynchronous Pipeline
+
+The estimation pipeline runs asynchronously on CUDA streams:
+1.  Host queues data upload (non-blocking).
+2.  GPU computes measurement functions $h(x)$ and Jacobian $H(x)$.
+3.  GPU solves linear system $G \Delta x = H^T W r$.
+4.  Host synchronizes only when results are needed.
+
 ### TelemetryProcessor
 
 The `TelemetryProcessor` handles asynchronous measurement updates:

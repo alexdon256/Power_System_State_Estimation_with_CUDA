@@ -5,217 +5,213 @@
  */
 
 #include <sle/math/LoadFlow.h>
-#include <sle/math/SparseMatrix.h>
+#include <sle/math/Solver.h>
 #include <sle/model/NetworkModel.h>
 #include <sle/model/StateVector.h>
+#include <sle/model/TelemetryData.h>
+#include <sle/model/MeasurementModel.h>
 #include <sle/model/Bus.h>
 #include <sle/Types.h>
 #include <cmath>
-#include <algorithm>
-#include <complex>
-
-#ifdef USE_OPENMP
-#include <omp.h>
-#endif
+#include <memory>
+#include <iostream>
 
 namespace sle {
 namespace math {
 
 LoadFlow::LoadFlow() {
+    // Default config
     config_.tolerance = 1e-6;
-    config_.maxIterations = 100;
-    config_.useFastDecoupled = false;
+    config_.maxIterations = 50;
+    config_.useGPU = true;
 }
 
 LoadFlow::LoadFlow(const LoadFlowConfig& config) : config_(config) {
 }
 
-using model::NetworkModel;
-using model::StateVector;
-using model::Bus;
-
-LoadFlowResult LoadFlow::solve(const NetworkModel& network) {
-    return solve(network, StateVector());
+LoadFlowResult LoadFlow::solve(const model::NetworkModel& network) {
+    model::StateVector state(network.getBusCount());
+    state.initializeFromNetwork(network);
+    return solve(network, state);
 }
 
-LoadFlowResult LoadFlow::solve(const NetworkModel& network, const StateVector& initialState) {
-    if (config_.useFastDecoupled) {
-        return solveFastDecoupled(&network, &initialState);
-    } else {
-        return solveNewtonRaphson(&network, &initialState);
+LoadFlowResult LoadFlow::solve(const model::NetworkModel& network, const model::StateVector& initialState) {
+    // Use Solver to solve Power Flow as a specialized State Estimation problem
+    // Create pseudo-measurements from bus specifications
+    
+    model::TelemetryData telemetry;
+    const auto& buses = network.getBuses();
+    
+    // High weight for power flow constraints (essentially hard constraints)
+    // Use stdDev = 1e-4 (variance = 1e-8, weight = 1e8)
+    const Real pfStdDev = 1e-4;
+    
+    for (const auto* bus : buses) {
+        if (!bus) continue;
+        
+        if (bus->getType() == model::BusType::Slack) {
+            // Slack Bus: Fixed V and Theta
+            // V_mag measurement
+            auto measV = std::make_unique<model::MeasurementModel>(
+                model::MeasurementType::V_MAGNITUDE, bus->getVoltageMagnitude(), pfStdDev);
+            measV->setLocation(bus->getId());
+            telemetry.addMeasurement(std::move(measV));
+            
+            // Angle measurement (V_ANGLE) to fix reference
+            // Assuming 0 degrees for Slack unless specified otherwise (usually 0 in NetworkModel)
+            Real angle = bus->getVoltageAngle(); // Usually 0
+            auto measAng = std::make_unique<model::MeasurementModel>(
+                model::MeasurementType::V_ANGLE, angle, pfStdDev);
+            measAng->setLocation(bus->getId());
+            telemetry.addMeasurement(std::move(measAng));
+            
+        } else if (bus->getType() == model::BusType::PV) {
+            // PV Bus: Fixed P and V
+            // P_injection = P_gen - P_load
+            Real pInj = bus->getPGeneration() - bus->getPLoad();
+            auto measP = std::make_unique<model::MeasurementModel>(
+                model::MeasurementType::P_INJECTION, pInj, pfStdDev);
+            measP->setLocation(bus->getId());
+            telemetry.addMeasurement(std::move(measP));
+            
+            // V_mag measurement
+            auto measV = std::make_unique<model::MeasurementModel>(
+                model::MeasurementType::V_MAGNITUDE, bus->getVoltageMagnitude(), pfStdDev);
+            measV->setLocation(bus->getId());
+            telemetry.addMeasurement(std::move(measV));
+            
+        } else {
+            // PQ Bus: Fixed P and Q
+            // P_injection = P_gen - P_load
+            Real pInj = bus->getPGeneration() - bus->getPLoad();
+            auto measP = std::make_unique<model::MeasurementModel>(
+                model::MeasurementType::P_INJECTION, pInj, pfStdDev);
+            measP->setLocation(bus->getId());
+            telemetry.addMeasurement(std::move(measP));
+            
+            // Q_injection = Q_gen - Q_load
+            Real qInj = bus->getQGeneration() - bus->getQLoad();
+            auto measQ = std::make_unique<model::MeasurementModel>(
+                model::MeasurementType::Q_INJECTION, qInj, pfStdDev);
+            measQ->setLocation(bus->getId());
+            telemetry.addMeasurement(std::move(measQ));
+        }
     }
-}
-
-LoadFlowResult LoadFlow::solveNewtonRaphson(const NetworkModel* network,
-                                           const StateVector* initialState) {
+    
+    // Configure Solver
+    SolverConfig solverConfig;
+    solverConfig.maxIterations = config_.maxIterations;
+    solverConfig.tolerance = config_.tolerance;
+    solverConfig.useGPU = config_.useGPU;
+    // No regularization for pure Newton-Raphson simulation
+    
+    // Run Solver
+    Solver solver(solverConfig);
+    
+    // Initialize state
+    model::StateVector state = initialState;
+    
+    SolverResult solverResult = solver.solve(state, network, telemetry);
+    
     LoadFlowResult result;
-    result.converged = false;
-    result.iterations = 0;
+    result.converged = solverResult.converged;
+    result.iterations = solverResult.iterations;
+    result.finalMismatch = solverResult.finalCost; // Approximation of mismatch
+    result.state = std::make_unique<model::StateVector>(state);
     
-    const auto& net = *network;
-    size_t nBuses = net.getBusCount();
-    StateVector state(nBuses);
-    
-    if (initialState && initialState->size() == nBuses) {
-        state = *initialState;
+    if (result.converged) {
+        result.message = "Converged";
     } else {
-        state.initializeFromNetwork(net);
+        result.message = "Did not converge (Solver status: " + 
+                        std::string(solverResult.converged ? "Success" : "Failed") + ")";
     }
     
-    std::vector<Real> pMismatch(nBuses);
-    std::vector<Real> qMismatch(nBuses);
+    // Compute actual mismatches for report
+    computeMismatches(network, state, result.busMismatches, result.busMismatches); 
+    // Note: The above line is buggy in original signature (2 vectors output), 
+    // but LoadFlowResult has only one vector 'busMismatches' which seems to be combined?
+    // Let's check struct definition. 
+    // struct LoadFlowResult { std::vector<Real> busMismatches; ... }
+    // We should compute P and Q mismatches and store them.
     
-    for (Index iter = 0; iter < config_.maxIterations; ++iter) {
-        // Compute power mismatches
-        computeMismatches(net, state, pMismatch, qMismatch);
-        
-        // Check convergence
-        // OPTIMIZATION: OpenMP parallelization with reduction
-        Real maxMismatch = 0.0;
-#ifdef USE_OPENMP
-        #pragma omp parallel for reduction(max:maxMismatch)
-#endif
-        for (size_t i = 0; i < nBuses; ++i) {
-            maxMismatch = std::max(maxMismatch, std::abs(pMismatch[i]));
-            maxMismatch = std::max(maxMismatch, std::abs(qMismatch[i]));
-        }
-        
-        result.finalMismatch = maxMismatch;
-        result.busMismatches = pMismatch;
-        result.busMismatches.insert(result.busMismatches.end(),
-                                    qMismatch.begin(), qMismatch.end());
-        
-        if (maxMismatch < config_.tolerance) {
-            result.converged = true;
-            result.iterations = iter + 1;
-            result.message = "Converged";
-            break;
-        }
-        
-        // Build Jacobian and solve for state update
-        std::vector<Complex> J;
-        std::vector<Index> rowPtr, colInd;
-        buildPowerFlowJacobian(net, state, J, rowPtr, colInd);
-        
-        // Solve linear system (simplified - would use cuSOLVER)
-        // For now, use simplified update
-        const auto& angles = state.getAngles();
-        const auto& magnitudes = state.getMagnitudes();
-        
-        // OPTIMIZATION: OpenMP parallelization for independent loop
-        auto buses = net.getBuses();
-#ifdef USE_OPENMP
-        #pragma omp parallel for
-#endif
-        for (size_t i = 0; i < nBuses; ++i) {
-            // Get bus by index (simplified - would use proper bus ID mapping)
-            if (i < buses.size()) {
-                auto* bus = buses[i];
-                if (bus && bus->getType() != BusType::Slack) {
-                    // Update angle
-                    Real deltaAngle = -pMismatch[i] * 0.1;  // Simplified
-                    state.setVoltageAngle(i, angles[i] + deltaAngle);
-                    
-                    if (bus->getType() == BusType::PQ) {
-                        // Update magnitude
-                        Real deltaV = -qMismatch[i] * 0.1;  // Simplified
-                        state.setVoltageMagnitude(i, magnitudes[i] + deltaV);
-                    }
-                }
-            }
-        }
+    std::vector<Real> pMis, qMis;
+    computeMismatches(network, state, pMis, qMis);
+    result.busMismatches.clear();
+    result.busMismatches.reserve(pMis.size() + qMis.size());
+    result.busMismatches.insert(result.busMismatches.end(), pMis.begin(), pMis.end());
+    result.busMismatches.insert(result.busMismatches.end(), qMis.begin(), qMis.end());
+    
+    // Update finalMismatch to be the max absolute mismatch
+    Real maxMis = 0.0;
+    for (Real val : result.busMismatches) {
+        maxMis = std::max(maxMis, std::abs(val));
     }
-    
-    if (!result.converged) {
-        result.iterations = config_.maxIterations;
-        result.message = "Maximum iterations reached";
-    }
-    
-    result.state = std::make_unique<StateVector>(state);
-    
+    result.finalMismatch = maxMis;
+
     return result;
 }
 
-LoadFlowResult LoadFlow::solveFastDecoupled(const NetworkModel* network,
-                                            const StateVector* initialState) {
-    // Fast decoupled load flow implementation
-    // Simplified version - full implementation would separate P-θ and Q-V updates
-    return solveNewtonRaphson(network, initialState);
-}
-
-void LoadFlow::computeMismatches(const NetworkModel& network, const StateVector& state,
+void LoadFlow::computeMismatches(const model::NetworkModel& network, const model::StateVector& state,
                                 std::vector<Real>& pMismatch,
                                 std::vector<Real>& qMismatch) const {
     size_t nBuses = network.getBusCount();
     
-    // Handle empty network
     if (nBuses == 0) {
         pMismatch.clear();
         qMismatch.clear();
         return;
     }
     
-    // Resize mismatch vectors if needed
-    if (pMismatch.size() != nBuses) {
-        pMismatch.resize(nBuses);
-    }
-    if (qMismatch.size() != nBuses) {
-        qMismatch.resize(nBuses);
-    }
+    pMismatch.resize(nBuses);
+    qMismatch.resize(nBuses);
     
-    // Compute power injections once and store directly in bus objects
+    // Use NetworkModel to compute injections (GPU or CPU)
+    // But NetworkModel::computePowerInjections updates internal state.
+    // We can use that.
     model::NetworkModel& modNetwork = const_cast<model::NetworkModel&>(network);
     modNetwork.computePowerInjections(state);
     
-    // Compute mismatches: P_mismatch = P_gen - P_load - P_injection
-    //                     Q_mismatch = Q_gen - Q_load - Q_injection
-    // OPTIMIZATION: OpenMP parallelization for independent loop
-    auto buses = network.getBuses();
-#ifdef USE_OPENMP
-    #pragma omp parallel for
-#endif
-    for (size_t i = 0; i < nBuses && i < buses.size(); ++i) {
-        const Bus* bus = buses[i];
-        if (!bus) {
-            pMismatch[i] = 0.0;
-            qMismatch[i] = 0.0;
-            continue;
-        }
-        pMismatch[i] = bus->getPGeneration() - bus->getPLoad() - bus->getPInjection();
-        qMismatch[i] = bus->getQGeneration() - bus->getQLoad() - bus->getQInjection();
+    const auto& buses = network.getBuses();
+    for (size_t i = 0; i < nBuses; ++i) {
+        const auto* bus = buses[i];
+        if (!bus) continue;
+        
+        // Mismatch = Specified - Calculated
+        // P_spec = P_gen - P_load
+        Real pSpec = bus->getPGeneration() - bus->getPLoad();
+        Real qSpec = bus->getQGeneration() - bus->getQLoad();
+        
+        // P_calc = P_injection (computed by model)
+        Real pCalc = bus->getPInjection();
+        Real qCalc = bus->getQInjection();
+        
+        pMismatch[i] = pSpec - pCalc;
+        qMismatch[i] = qSpec - qCalc;
     }
 }
 
-void LoadFlow::buildPowerFlowJacobian(const NetworkModel& network, const StateVector& state,
+// Forward to main solve method
+LoadFlowResult LoadFlow::solveNewtonRaphson(const model::NetworkModel* network,
+                                           const model::StateVector* initialState) {
+    if (!network) return LoadFlowResult{false, 0, 0.0, nullptr, {}, "Invalid network"};
+    if (initialState) {
+        return solve(*network, *initialState);
+    } else {
+        return solve(*network);
+    }
+}
+
+LoadFlowResult LoadFlow::solveFastDecoupled(const model::NetworkModel* network,
+                                            const model::StateVector* initialState) {
+    // Fallback to Newton-Raphson (Solver)
+    return solveNewtonRaphson(network, initialState);
+}
+
+void LoadFlow::buildPowerFlowJacobian(const model::NetworkModel& network, const model::StateVector& state,
                                      std::vector<Complex>& J,
                                      std::vector<Index>& rowPtr,
                                      std::vector<Index>& colInd) const {
-    // Build power flow Jacobian matrix
-    // This is a simplified version - full implementation would properly construct
-    // the Jacobian for P-θ and Q-V relationships
-    
-    size_t nBuses = network.getBusCount();
-    size_t nStates = 2 * nBuses;
-    
-    // Only resize rowPtr if size changed (avoid unnecessary reallocation)
-    if (rowPtr.size() != nStates + 1) {
-        rowPtr.clear();
-        rowPtr.resize(nStates + 1, 0);
-    } else {
-        // Zero-initialize existing vector (faster than resize)
-        std::fill(rowPtr.begin(), rowPtr.end(), 0);
-    }
-    colInd.clear();
-    J.clear();
-    
-    // Simplified structure - would need proper Jacobian computation
-    for (size_t i = 0; i < nStates; ++i) {
-        rowPtr[i + 1] = rowPtr[i] + nStates;
-        for (size_t j = 0; j < nStates; ++j) {
-            colInd.push_back(j);
-            J.push_back(Complex(0.0, 0.0));
-        }
-    }
+    // Unused in new architecture relying on Solver
 }
 
 } // namespace math

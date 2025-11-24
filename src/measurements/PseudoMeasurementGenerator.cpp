@@ -24,9 +24,10 @@ void PseudoMeasurementGenerator::generateFromLoadForecasts(
     for (size_t i = 0; i < buses.size() && i < loadForecasts.size(); ++i) {
         Real forecast = loadForecasts[i];
         
-        // Add pseudo load measurement
+        // Add pseudo load measurement (P Injection = -Load)
+        // Use P_INJECTION type so Solver can process it
         auto pMeas = std::make_unique<model::MeasurementModel>(
-            MeasurementType::PSEUDO, forecast, stdDev, 
+            MeasurementType::P_INJECTION, -forecast, stdDev, 
             "PSEUDO_P_" + std::to_string(buses[i]->getId()));
         pMeas->setLocation(buses[i]->getId());
         telemetry.addMeasurement(std::move(pMeas));
