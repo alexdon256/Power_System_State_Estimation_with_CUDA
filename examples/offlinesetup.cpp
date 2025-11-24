@@ -117,7 +117,7 @@ int main(int argc, char* argv[]) {
         estimator.setTelemetryData(telemetry);
         
         // Offline mode: High accuracy, relaxed timing
-        estimator.configureForOffline(1e-8, 50, true);  // tolerance, maxIter, useGPU
+        estimator.configureForOffline(1e-8, 50);  // tolerance, maxIterations (CUDA-exclusive)
         std::cout << "✓ Configured for offline analysis (high accuracy)\n";
         std::cout << "  - Tolerance: 1e-8\n";
         std::cout << "  - Max iterations: 50\n";

@@ -13,6 +13,7 @@
 #include <sle/model/StateVector.h>
 #include <sle/math/Solver.h>
 #include <sle/interface/TelemetryProcessor.h>
+#include <sle/baddata/BadDataDetector.h> // Added for bad data result type
 #include <memory>
 #include <atomic>
 
@@ -50,6 +51,10 @@ public:
     
     // Run state estimation with current state as initial guess (faster for real-time)
     StateEstimationResult estimateIncremental();
+    
+    // Detect bad data using results from last estimation
+    // Uses GPU data from the solver to avoid re-evaluation
+    baddata::BadDataResult detectBadData();
     
     // Check if model or measurements have been updated
     bool isModelUpdated() const { return modelUpdated_.load(); }
@@ -99,10 +104,12 @@ private:
     math::SolverConfig solverConfig_;
     
     void initializeState();
+    
+    // Internal estimation helper
+    StateEstimationResult estimateInternal(const math::SolverConfig& config);
 };
 
 } // namespace interface
 } // namespace sle
 
 #endif // SLE_INTERFACE_STATEESTIMATOR_H
-

@@ -16,6 +16,12 @@
 
 #ifdef USE_CUDA
 #include <sle/cuda/CudaPowerFlow.h>
+// Forward declaration
+namespace sle {
+namespace cuda {
+    class CudaDataManager;
+}
+}
 #endif
 
 namespace sle {
@@ -95,10 +101,6 @@ public:
     // This eliminates redundant GPU computations and host-device transfers
     
 private:
-#ifdef USE_CUDA
-    // Use unified memory pool instead of local pool (eliminates duplicate allocations)
-    bool useUnifiedPool_;  // Whether to use unified memory pool (default: true)
-#endif
     
 #ifdef USE_CUDA
     // Cached device data structures (updated incrementally)
@@ -111,6 +113,9 @@ private:
     mutable std::vector<Index> cachedBranchFromBusRowPtr_;  // CSR row pointers
     mutable std::vector<Index> cachedBranchToBusRowPtr_;    // CSR row pointers
     mutable bool deviceDataDirty_;
+    
+    // Internal data manager for GPU operations when no external one is provided
+    mutable std::shared_ptr<sle::cuda::CudaDataManager> internalDataManager_;
 #endif
     
     // Adjacency lists for O(1) branch queries (updated on changes)
@@ -120,17 +125,14 @@ private:
     
     // Cached CPU vectors for power injection computations (reused across calls, only resized on network changes)
     // Note: Power flows are computed directly in Solver::storeComputedValues, no caching needed
+    // Mutable allows these to be updated in const methods (like computePowerInjections)
     mutable std::vector<Real> cachedPInjection_;
     mutable std::vector<Real> cachedQInjection_;
     
     // Helper methods
 #ifdef USE_CUDA
-    void ensureGPUCapacity(size_t nBuses, size_t nBranches) const;
     void updateDeviceData() const;
-    
-    // Enable/disable unified memory pool (default: true for better memory utilization)
-    void setUseUnifiedPool(bool use) { useUnifiedPool_ = use; }
-    bool getUseUnifiedPool() const { return useUnifiedPool_; }
+    sle::cuda::CudaDataManager* getInternalDataManager() const;
 #endif
     void updateAdjacencyLists() const;
     void invalidateCaches();
@@ -149,4 +151,3 @@ private:
 } // namespace sle
 
 #endif // SLE_MODEL_NETWORKMODEL_H
-

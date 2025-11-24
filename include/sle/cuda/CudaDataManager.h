@@ -18,7 +18,6 @@ namespace cuda {
 // Forward declarations
 struct DeviceBus;
 struct DeviceBranch;
-class UnifiedCudaMemoryPool;
 
 // Unified GPU data manager - keeps all data on GPU
 class CudaDataManager {
@@ -27,8 +26,7 @@ public:
     ~CudaDataManager();
     
     // Initialize with network size (allocates GPU memory)
-    // useUnifiedPool: If true, uses UnifiedCudaMemoryPool for shared buffers (recommended)
-    void initialize(Index nBuses, Index nBranches, Index nMeasurements, bool useUnifiedPool = true);
+    void initialize(Index nBuses, Index nBranches, Index nMeasurements);
     
     // Update state on GPU (copies from host once)
     void updateState(const Real* v, const Real* theta, Index nBuses);
@@ -117,11 +115,8 @@ private:
     size_t qFlowSize_;
     size_t hxSize_;
     
-    bool useUnifiedPool_;  // Whether to use unified memory pool
-    
     void allocateMemory();
     void freeMemory();
-    void allocateWithUnifiedPool();  // Allocate using unified pool
 };
 
 } // namespace cuda

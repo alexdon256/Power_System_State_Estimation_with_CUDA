@@ -369,31 +369,47 @@ void JacobianMatrix::buildGPUFromPointers(const Real* d_v, const Real* d_theta,
     jacobianRowPtr = hostRowPtr_;
     jacobianColInd = hostColInd_;
     
-    // Allocate GPU memory only for Jacobian-specific data
+    // OPTIMIZATION: Check if we can reuse existing matrix buffers (Zero-Allocation Update)
+    // If matrix dimensions and NNZ match, we assume structure is identical (since we only support static topology)
+    bool canReuse = (matrix_.getNNZ() == static_cast<Index>(jacobianColInd.size()) &&
+                     matrix_.getNRows() == nRows_ &&
+                     matrix_.getNCols() == nCols_ &&
+                     matrix_.getValues() != nullptr &&
+                     matrix_.getRowPtr() != nullptr &&
+                     matrix_.getColInd() != nullptr);
+    
+    // Allocate GPU memory only if not reusing
     Index* d_jacobianRowPtr = nullptr;
     Index* d_jacobianColInd = nullptr;
     Real* d_jacobianValues = nullptr;
     
-    cudaError_t err;
-    err = cudaMalloc(&d_jacobianRowPtr, (nRows_ + 1) * sizeof(Index));
-    if (err != cudaSuccess) throw std::runtime_error("Failed to allocate d_jacobianRowPtr");
-    
-    err = cudaMalloc(&d_jacobianColInd, jacobianColInd.size() * sizeof(Index));
-    if (err != cudaSuccess) {
-        cudaFree(d_jacobianRowPtr);
-        throw std::runtime_error("Failed to allocate d_jacobianColInd");
+    if (canReuse) {
+        // Reuse existing GPU buffers
+        d_jacobianRowPtr = matrix_.getRowPtr();
+        d_jacobianColInd = matrix_.getColInd();
+        d_jacobianValues = matrix_.getValues();
+    } else {
+        cudaError_t err;
+        err = cudaMalloc(&d_jacobianRowPtr, (nRows_ + 1) * sizeof(Index));
+        if (err != cudaSuccess) throw std::runtime_error("Failed to allocate d_jacobianRowPtr");
+        
+        err = cudaMalloc(&d_jacobianColInd, jacobianColInd.size() * sizeof(Index));
+        if (err != cudaSuccess) {
+            cudaFree(d_jacobianRowPtr);
+            throw std::runtime_error("Failed to allocate d_jacobianColInd");
+        }
+        
+        err = cudaMalloc(&d_jacobianValues, jacobianColInd.size() * sizeof(Real));
+        if (err != cudaSuccess) {
+            cudaFree(d_jacobianRowPtr);
+            cudaFree(d_jacobianColInd);
+            throw std::runtime_error("Failed to allocate d_jacobianValues");
+        }
+        
+        // Copy Jacobian structure to GPU (only needed on initialization)
+        cudaMemcpy(d_jacobianRowPtr, jacobianRowPtr.data(), (nRows_ + 1) * sizeof(Index), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_jacobianColInd, jacobianColInd.data(), jacobianColInd.size() * sizeof(Index), cudaMemcpyHostToDevice);
     }
-    
-    err = cudaMalloc(&d_jacobianValues, jacobianColInd.size() * sizeof(Real));
-    if (err != cudaSuccess) {
-        cudaFree(d_jacobianRowPtr);
-        cudaFree(d_jacobianColInd);
-        throw std::runtime_error("Failed to allocate d_jacobianValues");
-    }
-    
-    // Copy Jacobian structure to GPU (only structure, not data)
-    cudaMemcpy(d_jacobianRowPtr, jacobianRowPtr.data(), (nRows_ + 1) * sizeof(Index), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_jacobianColInd, jacobianColInd.data(), jacobianColInd.size() * sizeof(Index), cudaMemcpyHostToDevice);
     
     // Call CUDA kernel using provided GPU pointers (reuses GPU data)
     // OPTIMIZATION: Use stream for asynchronous execution
@@ -413,18 +429,21 @@ void JacobianMatrix::buildGPUFromPointers(const Real* d_v, const Real* d_theta,
         cudaDeviceSynchronize();
     }
     
-    // Build sparse matrix directly from device pointers (avoids host-device copy)
-    matrix_.buildFromDevicePointers(d_jacobianValues, d_jacobianRowPtr, d_jacobianColInd,
-                                    nRows_, nCols_, static_cast<Index>(jacobianColInd.size()));
+    if (!canReuse) {
+        // Build sparse matrix directly from device pointers (avoids host-device copy)
+        // SparseMatrix takes ownership of the device memory
+        matrix_.buildFromDevicePointers(d_jacobianValues, d_jacobianRowPtr, d_jacobianColInd,
+                                        nRows_, nCols_, static_cast<Index>(jacobianColInd.size()));
+        
+        // Mark that we don't need to free these pointers (SparseMatrix owns them now)
+        d_jacobianValues = nullptr;
+        d_jacobianRowPtr = nullptr;
+        d_jacobianColInd = nullptr;
+    }
     
     // Store structure (values stay on GPU)
     hostRowPtr_ = jacobianRowPtr;
     hostColInd_ = jacobianColInd;
-    
-    // Mark that we don't need to free these pointers (SparseMatrix owns them now)
-    d_jacobianValues = nullptr;
-    d_jacobianRowPtr = nullptr;
-    d_jacobianColInd = nullptr;
 }
 
 void JacobianMatrix::getHostCSR(std::vector<Real>& values, std::vector<Index>& rowPtr, std::vector<Index>& colInd) const {

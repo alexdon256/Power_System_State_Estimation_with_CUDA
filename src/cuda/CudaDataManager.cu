@@ -7,7 +7,6 @@
 #include <sle/cuda/CudaDataManager.h>
 #include <sle/cuda/CudaPowerFlow.h>
 #include <sle/cuda/CudaUtils.h>
-#include <sle/cuda/UnifiedCudaMemoryPool.h>
 #include <cuda_runtime.h>
 #include <stdexcept>
 
@@ -25,15 +24,14 @@ CudaDataManager::CudaDataManager()
       branchFromBusSize_(0), branchToBusSize_(0),
       d_pInjection_(nullptr), d_qInjection_(nullptr),
       d_pFlow_(nullptr), d_qFlow_(nullptr), d_hx_(nullptr),
-      pInjectionSize_(0), qInjectionSize_(0), pFlowSize_(0), qFlowSize_(0), hxSize_(0),
-      useUnifiedPool_(true) {
+      pInjectionSize_(0), qInjectionSize_(0), pFlowSize_(0), qFlowSize_(0), hxSize_(0) {
 }
 
 CudaDataManager::~CudaDataManager() {
     freeMemory();
 }
 
-void CudaDataManager::initialize(Index nBuses, Index nBranches, Index nMeasurements, bool useUnifiedPool) {
+void CudaDataManager::initialize(Index nBuses, Index nBranches, Index nMeasurements) {
     if (initialized_ && (nBuses_ != nBuses || nBranches_ != nBranches || nMeasurements_ != nMeasurements)) {
         freeMemory();
     }
@@ -41,14 +39,9 @@ void CudaDataManager::initialize(Index nBuses, Index nBranches, Index nMeasureme
     nBuses_ = nBuses;
     nBranches_ = nBranches;
     nMeasurements_ = nMeasurements;
-    useUnifiedPool_ = useUnifiedPool;
     
     if (!initialized_) {
-        if (useUnifiedPool_) {
-            allocateWithUnifiedPool();
-        } else {
-            allocateMemory();
-        }
+        allocateMemory();
         initialized_ = true;
     }
 }
@@ -97,59 +90,23 @@ void CudaDataManager::allocateMemory() {
     hxSize_ = nMeasurements_;
 }
 
-void CudaDataManager::allocateWithUnifiedPool() {
-    auto& pool = UnifiedCudaMemoryPool::getInstance();
-    
-    // Allocate measurement-specific buffers (not shared)
-    try {
-        CUDA_CHECK_THROW(cudaMalloc(&d_measurementTypes_, nMeasurements_ * sizeof(Index)));
-        CUDA_CHECK_THROW(cudaMalloc(&d_measurementLocations_, nMeasurements_ * sizeof(Index)));
-        CUDA_CHECK_THROW(cudaMalloc(&d_measurementBranches_, nMeasurements_ * sizeof(Index)));
-    } catch (...) {
-        if (d_measurementTypes_) cudaFree(d_measurementTypes_);
-        if (d_measurementLocations_) cudaFree(d_measurementLocations_);
-        if (d_measurementBranches_) cudaFree(d_measurementBranches_);
-        throw;
-    }
-    
-    // Get shared buffers from unified pool
-    pool.ensureStateBuffers(nBuses_, d_v_, vSize_, d_theta_, thetaSize_);
-    pool.ensureNetworkBuffers(nBuses_, nBranches_, d_buses_, busesSize_, d_branches_, branchesSize_);
-    pool.ensurePowerInjectionBuffers(nBuses_, d_pInjection_, pInjectionSize_, d_qInjection_, qInjectionSize_);
-    pool.ensurePowerFlowBuffers(nBranches_, d_pFlow_, pFlowSize_, d_qFlow_, qFlowSize_);
-    pool.ensureMeasurementBuffer(nMeasurements_, d_hx_, hxSize_);
-    
-    // Adjacency lists allocated on update (size varies)
-    d_branchFromBus_ = nullptr;
-    d_branchFromBusRowPtr_ = nullptr;
-    d_branchToBus_ = nullptr;
-    d_branchToBusRowPtr_ = nullptr;
-}
-
 void CudaDataManager::freeMemory() {
-    // Only free buffers we own (not from unified pool)
-    if (!useUnifiedPool_) {
-        if (d_v_) cudaFree(d_v_);
-        if (d_theta_) cudaFree(d_theta_);
-        if (d_buses_) cudaFree(d_buses_);
-        if (d_branches_) cudaFree(d_branches_);
-        if (d_pInjection_) cudaFree(d_pInjection_);
-        if (d_qInjection_) cudaFree(d_qInjection_);
-        if (d_pFlow_) cudaFree(d_pFlow_);
-        if (d_qFlow_) cudaFree(d_qFlow_);
-        if (d_hx_) cudaFree(d_hx_);
-    }
-    
-    // Always free measurement-specific buffers (we own these)
+    if (d_v_) cudaFree(d_v_);
+    if (d_theta_) cudaFree(d_theta_);
+    if (d_buses_) cudaFree(d_buses_);
+    if (d_branches_) cudaFree(d_branches_);
     if (d_measurementTypes_) cudaFree(d_measurementTypes_);
     if (d_measurementLocations_) cudaFree(d_measurementLocations_);
     if (d_measurementBranches_) cudaFree(d_measurementBranches_);
-    
-    // Always free adjacency buffers (we own these)
     if (d_branchFromBus_) cudaFree(d_branchFromBus_);
     if (d_branchFromBusRowPtr_) cudaFree(d_branchFromBusRowPtr_);
     if (d_branchToBus_) cudaFree(d_branchToBus_);
     if (d_branchToBusRowPtr_) cudaFree(d_branchToBusRowPtr_);
+    if (d_pInjection_) cudaFree(d_pInjection_);
+    if (d_qInjection_) cudaFree(d_qInjection_);
+    if (d_pFlow_) cudaFree(d_pFlow_);
+    if (d_qFlow_) cudaFree(d_qFlow_);
+    if (d_hx_) cudaFree(d_hx_);
     
     d_v_ = nullptr;
     d_theta_ = nullptr;
@@ -262,4 +219,3 @@ void CudaDataManager::updateAdjacency(const Index* branchFromBus, const Index* b
 
 } // namespace cuda
 } // namespace sle
-

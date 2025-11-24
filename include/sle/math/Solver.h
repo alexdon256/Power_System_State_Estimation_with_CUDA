@@ -13,7 +13,7 @@
 #include <sle/math/SparseMatrix.h>
 #include <sle/cuda/CudaDataManager.h>
 #include <sle/cuda/CudaUtils.h>
-#include <sle/cuda/UnifiedCudaMemoryPool.h>
+#include <sle/math/CuSOLVERIntegration.h>
 #include <memory>
 #include <vector>
 #include <string>
@@ -30,6 +30,7 @@ inline cudaError_t cudaMemset(void*, int, size_t) { return cudaSuccess; }
 inline cudaError_t cudaDeviceSynchronize() { return cudaSuccess; }
 #define cudaMemcpyHostToDevice 0
 inline const char* cudaGetErrorString(cudaError_t) { return "CUDA disabled"; }
+using cudaStream_t = void*;
 #endif
 
 // Forward declarations
@@ -69,17 +70,31 @@ public:
     const SolverConfig& getConfig() const { return config_; }
     
     // Solve WLS state estimation: minimize J(x) = [z - h(x)]^T R^-1 [z - h(x)]
+    // reuseStructure: If true, assumes Jacobian structure matches previous call (static topology)
     SolverResult solve(model::StateVector& state, const model::NetworkModel& network,
-                      const model::TelemetryData& telemetry);
+                      const model::TelemetryData& telemetry, bool reuseStructure = false);
+                      
+    // Solve with custom weights (useful for Robust Estimator / IRLS)
+    // If weights is empty, uses weights from telemetry
+    // reuseStructure: If true, assumes Jacobian structure matches previous call (static topology)
+    SolverResult solve(model::StateVector& state, const model::NetworkModel& network,
+                      const model::TelemetryData& telemetry, const std::vector<Real>& weights,
+                      bool reuseStructure = false);
     
     // Store computed values from GPU into Bus/Branch objects (optimized - reuses GPU data)
     // This method copies power injections/flows already computed during solver iterations
     // instead of recomputing them, eliminating redundant GPU computations
     void storeComputedValues(model::StateVector& state, model::NetworkModel& network);
     
-    // Enable/disable unified memory pool (default: true for better memory utilization)
-    void setUseUnifiedPool(bool use) { useUnifiedPool_ = use; }
-    bool getUseUnifiedPool() const { return useUnifiedPool_; }
+    void setUseUnifiedPool(bool use) { /* Deprecated */ }
+    bool getUseUnifiedPool() const { return true; }
+    
+    // Get data manager (useful for sharing with other components)
+    cuda::CudaDataManager* getDataManager() const { return sharedDataManager_.get(); }
+
+    // Get measurement functions (useful for sharing with BadDataDetector)
+    MeasurementFunctions& getMeasurementFunctions() { return *measFuncs_; }
+    const MeasurementFunctions& getMeasurementFunctions() const { return *measFuncs_; }
     
 private:
     SolverConfig config_;
@@ -92,7 +107,11 @@ private:
     // CUDA streams for overlapping operations (memory transfers + kernel execution)
     cudaStream_t computeStream_;      // Main compute stream
     cudaStream_t transferStream_;    // Dedicated stream for memory transfers
-    bool streamInitialized_;
+    
+    // Persistent handles and objects to avoid re-initialization
+    cusparseHandle_t cusparseHandle_;
+    std::unique_ptr<CuSOLVERIntegration> cusolver_;
+    SparseMatrix gainMatrix_;         // Reused gain matrix (preserves allocation)
     
     // Pinned memory buffers for frequently transferred data (faster transfers)
     Real* h_pinned_z_ = nullptr;           // Pinned: measurement vector
@@ -102,14 +121,15 @@ private:
     size_t pinned_weights_size_ = 0;
     size_t pinned_state_size_ = 0;
     
-    // CUDA memory pool for performance (reuse allocations across iterations)
+    // CudaMemoryPool stores large GPU buffers to avoid re-allocation overhead.
+    // These buffers are only resized when necessary.
     struct CudaMemoryPool {
         Real* d_residual = nullptr;
         Real* d_weights = nullptr;
         Real* d_weightedResidual = nullptr;
         Real* d_rhs = nullptr;
         Real* d_z = nullptr;              // Measurement vector
-        Real* d_hx = nullptr;              // Measurement function values
+        // Real* d_hx = nullptr;           // Removed: Managed by MeasurementFunctions/CudaDataManager
         Real* d_deltaX = nullptr;          // State correction
         Real* d_x_old = nullptr;           // Previous state
         Real* d_x_new = nullptr;           // Updated state
@@ -124,7 +144,7 @@ private:
         size_t weightedResidualSize = 0;
         size_t rhsSize = 0;
         size_t zSize = 0;
-        size_t hxSize = 0;                  // May point to unified pool buffer
+        // size_t hxSize = 0;              // Removed
         size_t deltaXSize = 0;
         size_t stateSize = 0;
         size_t partialSize = 0;            // Max grid size for partial reductions - may point to unified pool
@@ -141,7 +161,7 @@ private:
             if (d_weightedResidual) cudaFree(d_weightedResidual);
             if (d_rhs) cudaFree(d_rhs);
             if (d_z) cudaFree(d_z);
-            if (d_hx) cudaFree(d_hx);
+            // if (d_hx) cudaFree(d_hx);   // Removed
             if (d_deltaX) cudaFree(d_deltaX);
             if (d_x_old) cudaFree(d_x_old);
             if (d_x_new) cudaFree(d_x_new);
@@ -176,11 +196,7 @@ private:
                 return;
             }
             cuda::ensureCapacity(d_z, zSize, nMeas);
-            // d_hx may be set from unified pool - don't allocate here if using unified pool
-            // This will be handled by Solver::solve() when useUnifiedPool_ is true
-            if (hxSize == 0) {
-                cuda::ensureCapacity(d_hx, hxSize, nMeas);
-            }
+            
             cuda::ensureCapacity(d_deltaX, deltaXSize, nStates);
             
             // Ensure state vectors (allocate both together)
@@ -241,4 +257,3 @@ private:
 } // namespace sle
 
 #endif // SLE_MATH_SOLVER_H
-

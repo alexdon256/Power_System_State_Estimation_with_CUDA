@@ -14,7 +14,7 @@
 #include <sle/cuda/CudaSparseOps.h>
 #include <sle/cuda/CudaDataManager.h>
 #include <sle/cuda/CudaPowerFlow.h>
-#include <sle/cuda/UnifiedCudaMemoryPool.h>
+// #include <sle/cuda/UnifiedCudaMemoryPool.h> // Removed
 #include <sle/math/JacobianMatrix.h>
 #include <cusparse.h>
 #include <cusolverSp.h>
@@ -41,25 +41,20 @@ Solver::Solver()
     : jacobian_(std::make_unique<JacobianMatrix>()),
       measFuncs_(std::make_unique<MeasurementFunctions>()),
       sharedDataManager_(std::make_unique<cuda::CudaDataManager>()),
-      useUnifiedPool_(true),
-      streamInitialized_(false),
-      transferStream_(nullptr) {
+      cusolver_(std::make_unique<CuSOLVERIntegration>()) {
     // Share CudaDataManager with MeasurementFunctions
     measFuncs_->setDataManager(sharedDataManager_.get());
     
-    // Create CUDA streams for overlapping operations
-    cudaError_t err = cudaStreamCreate(&computeStream_);
-    if (err == cudaSuccess) {
-        err = cudaStreamCreate(&transferStream_);
-        if (err == cudaSuccess) {
-            streamInitialized_ = true;
-        } else {
-            // If transfer stream fails, destroy compute stream and use default
-            cudaStreamDestroy(computeStream_);
-            computeStream_ = nullptr;
-        }
-    }
-    // If stream creation fails, operations will use default stream (synchronous)
+    // Create CUDA streams for overlapping operations (required)
+    CUDA_CHECK_THROW(cudaStreamCreate(&computeStream_));
+    CUDA_CHECK_THROW(cudaStreamCreate(&transferStream_));
+    
+    // Initialize persistent handles
+    cusparseCreate(&cusparseHandle_);
+    cusparseSetStream(cusparseHandle_, computeStream_);
+    
+    cusolver_->initialize();
+    cusolver_->setStream(computeStream_);
 }
 
 Solver::~Solver() {
@@ -68,15 +63,24 @@ Solver::~Solver() {
     if (h_pinned_weights_) cudaFreeHost(h_pinned_weights_);
     if (h_pinned_state_) cudaFreeHost(h_pinned_state_);
     
+    // Destroy handles
+    if (cusparseHandle_) cusparseDestroy(cusparseHandle_);
+    
     // Destroy CUDA streams if initialized
-    if (streamInitialized_) {
+    // Streams are always initialized
         if (computeStream_) cudaStreamDestroy(computeStream_);
         if (transferStream_) cudaStreamDestroy(transferStream_);
     }
 }
 
 SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
-                         const TelemetryData& telemetry) {
+                         const TelemetryData& telemetry, bool reuseStructure) {
+    return solve(state, network, telemetry, {}, reuseStructure);
+}
+
+SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
+                         const TelemetryData& telemetry, const std::vector<Real>& weightsOverride,
+                         bool reuseStructure) {
     SolverResult result;
     result.converged = false;
     result.iterations = 0;
@@ -85,7 +89,16 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     std::vector<Real> z;
     std::vector<Real> weights;
     telemetry.getMeasurementVector(z);
-    telemetry.getWeightMatrix(weights);
+    
+    if (!weightsOverride.empty()) {
+        if (weightsOverride.size() != z.size()) {
+            result.message = "Weights override size mismatch";
+            return result;
+        }
+        weights = weightsOverride;
+    } else {
+        telemetry.getWeightMatrix(weights);
+    }
     
     size_t nMeas = z.size();
     size_t nBuses = network.getBusCount();
@@ -102,15 +115,6 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
         state.initializeFromNetwork(network);
     }
     
-    // Create cuSPARSE handle
-    cusparseHandle_t cusparseHandle;
-    cusparseCreate(&cusparseHandle);
-    
-    // OPTIMIZATION: Associate cuSPARSE handle with compute stream for overlapping operations
-    if (streamInitialized_ && computeStream_) {
-        cusparseSetStream(cusparseHandle, computeStream_);
-    }
-    
     // CUDA-EXCLUSIVE: Ensure GPU memory pool has sufficient capacity
     size_t nBranches = network.getBranchCount();
     memoryPool_.ensureCapacity(nMeas, nStates, nBranches);
@@ -118,7 +122,7 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     // Verify all allocations succeeded (CUDA-exclusive, no fallback)
     if (!memoryPool_.d_residual || !memoryPool_.d_weights || 
         !memoryPool_.d_weightedResidual || !memoryPool_.d_rhs ||
-        !memoryPool_.d_z || !memoryPool_.d_hx || !memoryPool_.d_deltaX ||
+        !memoryPool_.d_z || !memoryPool_.d_deltaX ||
         !memoryPool_.d_x_old || !memoryPool_.d_x_new || !memoryPool_.d_partial) {
         result.message = "CUDA memory allocation failed";
         return result;
@@ -138,37 +142,45 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     if (h_pinned_weights_) std::copy(weights.begin(), weights.end(), h_pinned_weights_);
     
     // Use dedicated transfer stream for memory transfers (can overlap with compute)
-    cudaStream_t transferStream = streamInitialized_ ? transferStream_ : nullptr;
+    cudaStream_t transferStream = transferStream_;
     
     // Launch async transfers on transfer stream (can overlap with compute operations)
-    cudaMemcpyAsync(memoryPool_.d_z, z_src, nMeas * sizeof(Real), 
-                   cudaMemcpyHostToDevice, transferStream);
-    cudaMemcpyAsync(memoryPool_.d_weights, weights_src, nMeas * sizeof(Real), 
-                   cudaMemcpyHostToDevice, transferStream);
+    CUDA_CHECK_THROW(cudaMemcpyAsync(memoryPool_.d_z, z_src, nMeas * sizeof(Real), cudaMemcpyHostToDevice, transferStream_));
+    CUDA_CHECK_THROW(cudaMemcpyAsync(memoryPool_.d_weights, weights_src, nMeas * sizeof(Real), cudaMemcpyHostToDevice, transferStream_));
     
     auto& stateVec = state.getStateVector();
     Real* state_src = h_pinned_state_ ? h_pinned_state_ : stateVec.data();
     if (h_pinned_state_) std::copy(stateVec.begin(), stateVec.end(), h_pinned_state_);
-    cudaMemcpyAsync(memoryPool_.d_x_old, state_src, nStates * sizeof(Real), 
-                   cudaMemcpyHostToDevice, transferStream);
+    CUDA_CHECK_THROW(cudaMemcpyAsync(memoryPool_.d_x_old, state_src, nStates * sizeof(Real), cudaMemcpyHostToDevice, transferStream_));
     
     // Synchronize transfer stream before using data in compute stream
-    if (transferStream) {
-        cudaStreamSynchronize(transferStream);
+    cudaStreamSynchronize(transferStream_);
+    
+    // OPTIMIZATION: Build Jacobian structure only if needed
+    if (reuseStructure) {
+        // Safety check: Verify dimensions match even if reuse requested
+        if (jacobian_->getNCols() != 2 * network.getBusCount() ||
+            jacobian_->getNRows() != z.size()) {
+            reuseStructure = false; // Force rebuild if dimensions mismatch
+        }
     }
     
-    // OPTIMIZATION: Build Jacobian structure once before loop (structure doesn't change)
-    jacobian_->buildStructure(network, telemetry);
+    if (!reuseStructure) {
+        jacobian_->buildStructure(network, telemetry);
+    }
     
     Real norm = 0.0;
     Real* d_hx_final = nullptr;  // Store d_hx from last iteration to reuse for objective
     
     // OPTIMIZATION: Get compute stream once for reuse
-    cudaStream_t stream = streamInitialized_ ? computeStream_ : nullptr;
+    cudaStream_t stream = computeStream_;
     
     for (Index iter = 0; iter < config_.maxIterations; ++iter) {
         // OPTIMIZATION: Pass stream to evaluateGPU for asynchronous execution
-        Real* d_hx = measFuncs_->evaluateGPU(state, network, telemetry, stream);
+        // Pass reuseStructure so MeasurementFunctions knows whether to re-upload static data
+        // Note: For iterations > 0, we always reuse topology as it doesn't change within solve loop
+        bool currentReuse = reuseStructure || (iter > 0);
+        Real* d_hx = measFuncs_->evaluateGPU(state, network, telemetry, currentReuse, stream);
         d_hx_final = d_hx;  // Keep reference to last computed hx
         
         // Fused: Compute residual and weighted residual in one kernel
@@ -183,17 +195,17 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
         jacobian_->buildGPU(state, network, telemetry, sharedDataManager_.get(), stream);
         
         // Compute gain matrix on GPU using cuSPARSE
-        SparseMatrix G;
-        computeGainMatrixGPU(*jacobian_, memoryPool_.d_weights, G, cusparseHandle);
+        // Use persistent gainMatrix_ to avoid re-allocation
+        computeGainMatrixGPU(*jacobian_, memoryPool_.d_weights, gainMatrix_, cusparseHandle_);
         
         cudaMemset(memoryPool_.d_rhs, 0, nStates * sizeof(Real));
         
         const SparseMatrix& HMat = jacobian_->getMatrix();
         if (HMat.getNNZ() > 0) {
-            HMat.multiplyVectorTranspose(memoryPool_.d_weightedResidual, memoryPool_.d_rhs, cusparseHandle);
+            HMat.multiplyVectorTranspose(memoryPool_.d_weightedResidual, memoryPool_.d_rhs, cusparseHandle_);
         }
         
-        solveLinearSystemGPU(G, memoryPool_.d_rhs, memoryPool_.d_deltaX, nStates);
+        solveLinearSystemGPU(gainMatrix_, memoryPool_.d_rhs, memoryPool_.d_deltaX, nStates);
         
         // Fused: Update state and compute norm in one kernel (using pooled buffer)
         const Real damping = config_.dampingFactor;
@@ -233,14 +245,9 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
         if (iter < config_.maxIterations - 1 && norm >= config_.tolerance) {
             // OPTIMIZATION: Use pinned memory and transfer stream for async copy
             Real* state_dst = h_pinned_state_ ? h_pinned_state_ : stateVec.data();
-            cudaStream_t transferStream = streamInitialized_ ? transferStream_ : nullptr;
-            cudaMemcpyAsync(state_dst, memoryPool_.d_x_old, nStates * sizeof(Real), 
-                          cudaMemcpyDeviceToHost, transferStream);
-            if (transferStream) {
-                cudaStreamSynchronize(transferStream);
-            } else {
-                cudaDeviceSynchronize();
-            }
+    cudaStream_t transferStream = transferStream_;
+            cuda::asyncCopyD2HAndSync(memoryPool_.d_x_old, state_dst, nStates, transferStream_);
+            cudaStreamSynchronize(transferStream);
             // Copy from pinned to stateVec if using pinned memory
             if (h_pinned_state_) {
                 std::copy(h_pinned_state_, h_pinned_state_ + nStates, stateVec.begin());
@@ -268,21 +275,14 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     // No need to copy for final evaluation since we already computed objective from GPU data
     // Use pinned memory and transfer stream for async copy
     Real* state_dst = h_pinned_state_ ? h_pinned_state_ : stateVec.data();
-    cudaStream_t transferStream = streamInitialized_ ? transferStream_ : nullptr;
-    cudaMemcpyAsync(state_dst, memoryPool_.d_x_old, nStates * sizeof(Real), 
-                   cudaMemcpyDeviceToHost, transferStream);
-    if (transferStream) {
-        cudaStreamSynchronize(transferStream);
-    } else {
-        cudaDeviceSynchronize();
-    }
+    cudaStream_t transferStream = transferStream_;
+    cuda::asyncCopyD2HAndSync(memoryPool_.d_x_old, state_dst, nStates, transferStream_);
+    cudaStreamSynchronize(transferStream);
     // Copy from pinned to stateVec if using pinned memory
     if (h_pinned_state_) {
         std::copy(h_pinned_state_, h_pinned_state_ + nStates, stateVec.begin());
     }
     state.updateFromStateVector();
-    
-    cusparseDestroy(cusparseHandle);
     
     return result;
 }
@@ -320,14 +320,10 @@ void Solver::storeComputedValues(model::StateVector& state, model::NetworkModel&
     if (d_pInjection && d_qInjection) {
         // OPTIMIZATION: Batch power injection transfers using async operations
         std::vector<Real> pInjection(nBuses), qInjection(nBuses);
-        cudaStream_t stream = streamInitialized_ ? computeStream_ : nullptr;
-        cudaMemcpyAsync(pInjection.data(), d_pInjection, nBuses * sizeof(Real), cudaMemcpyDeviceToHost, stream);
-        cudaMemcpyAsync(qInjection.data(), d_qInjection, nBuses * sizeof(Real), cudaMemcpyDeviceToHost, stream);
-        if (stream) {
-            cudaStreamSynchronize(stream);
-        } else {
-            cudaDeviceSynchronize();
-        }
+    cudaStream_t stream = computeStream_;
+        cuda::asyncCopyD2H(d_pInjection, pInjection.data(), nBuses, computeStream_);
+        cuda::asyncCopyD2H(d_qInjection, qInjection.data(), nBuses, computeStream_);
+        cudaStreamSynchronize(stream);
         
         Real baseMVA = network.getBaseMVA();
         // OPTIMIZATION: OpenMP parallelization for independent loop
@@ -371,14 +367,10 @@ void Solver::storeComputedValues(model::StateVector& state, model::NetworkModel&
                 // Pool allocation failed, skip derived quantities
                 // Still copy P/Q flows (use async with transfer stream for consistency)
                 std::vector<Real> pFlow(nBranches), qFlow(nBranches);
-                cudaStream_t transferStream = streamInitialized_ ? transferStream_ : nullptr;
-                cudaMemcpyAsync(pFlow.data(), d_pFlow, nBranches * sizeof(Real), cudaMemcpyDeviceToHost, transferStream);
-                cudaMemcpyAsync(qFlow.data(), d_qFlow, nBranches * sizeof(Real), cudaMemcpyDeviceToHost, transferStream);
-                if (transferStream) {
-                    cudaStreamSynchronize(transferStream);
-                } else {
-                    cudaDeviceSynchronize();
-                }
+    cudaStream_t transferStream = transferStream_;
+                cuda::asyncCopyD2H(d_pFlow, pFlow.data(), nBranches, transferStream_);
+                cuda::asyncCopyD2H(d_qFlow, qFlow.data(), nBranches, transferStream_);
+                cudaStreamSynchronize(transferStream);
                 
                 auto branches = network.getBranches();
                 // OPTIMIZATION: OpenMP parallelization for independent loop
@@ -403,22 +395,18 @@ void Solver::storeComputedValues(model::StateVector& state, model::NetworkModel&
             // This allows overlapping transfers and reduces kernel launch overhead
             std::vector<Real> pFlow(nBranches), qFlow(nBranches);
             std::vector<Real> pMW(nBranches), qMVAR(nBranches), iPU(nBranches), iAmps(nBranches);
-            cudaStream_t stream = streamInitialized_ ? computeStream_ : nullptr;
+    cudaStream_t stream = computeStream_;
             
             // Launch all async transfers (can overlap with other operations)
-            cudaMemcpyAsync(pFlow.data(), d_pFlow, nBranches * sizeof(Real), cudaMemcpyDeviceToHost, stream);
-            cudaMemcpyAsync(qFlow.data(), d_qFlow, nBranches * sizeof(Real), cudaMemcpyDeviceToHost, stream);
-            cudaMemcpyAsync(pMW.data(), d_pMW, nBranches * sizeof(Real), cudaMemcpyDeviceToHost, stream);
-            cudaMemcpyAsync(qMVAR.data(), d_qMVAR, nBranches * sizeof(Real), cudaMemcpyDeviceToHost, stream);
-            cudaMemcpyAsync(iPU.data(), d_iPU, nBranches * sizeof(Real), cudaMemcpyDeviceToHost, stream);
-            cudaMemcpyAsync(iAmps.data(), d_iAmps, nBranches * sizeof(Real), cudaMemcpyDeviceToHost, stream);
+            cuda::asyncCopyD2H(d_pFlow, pFlow.data(), nBranches, computeStream_);
+            cuda::asyncCopyD2H(d_qFlow, qFlow.data(), nBranches, computeStream_);
+            cuda::asyncCopyD2H(d_pMW, pMW.data(), nBranches, computeStream_);
+            cuda::asyncCopyD2H(d_qMVAR, qMVAR.data(), nBranches, computeStream_);
+            cuda::asyncCopyD2H(d_iPU, iPU.data(), nBranches, computeStream_);
+            cuda::asyncCopyD2H(d_iAmps, iAmps.data(), nBranches, computeStream_);
             
             // Synchronize once after all transfers are launched
-            if (stream) {
-                cudaStreamSynchronize(stream);
-            } else {
-                cudaDeviceSynchronize();
-            }
+            cudaStreamSynchronize(stream);
             
             // Store in Branch objects
             // OPTIMIZATION: OpenMP parallelization for independent loop
@@ -475,10 +463,19 @@ void Solver::computeGainMatrixGPU(const JacobianMatrix& H,
     Index* G_colInd = nullptr;
     Index G_nnz = 0;
     
-    // Allocate row pointer array (SparseMatrix will take ownership)
-    cudaError_t err = cudaMalloc(&G_rowPtr, (nStates + 1) * sizeof(Index));
-    if (err != cudaSuccess) {
-        throw std::runtime_error("Failed to allocate GPU memory for gain matrix row pointers");
+    bool reuse = (G.getNNZ() > 0 && G.getValues() && G.getRowPtr() && G.getColInd());
+    
+    if (reuse) {
+        G_values = G.getValues();
+        G_rowPtr = G.getRowPtr();
+        G_colInd = G.getColInd();
+        G_nnz = G.getNNZ();
+    } else {
+        // Allocate row pointer array (SparseMatrix will take ownership)
+        cudaError_t err = cudaMalloc(&G_rowPtr, (nStates + 1) * sizeof(Index));
+        if (err != cudaSuccess) {
+            throw std::runtime_error("Failed to allocate GPU memory for gain matrix row pointers");
+        }
     }
     
     // Try direct GPU computation first (computes G_ij = sum_k(H_ki * w_k * H_kj) directly)
@@ -490,53 +487,52 @@ void Solver::computeGainMatrixGPU(const JacobianMatrix& H,
     
     // If direct method fails, try SpGEMM
     if (!success || G_nnz == 0) {
-        if (G_rowPtr) cudaFree(G_rowPtr);
-        if (G_values) cudaFree(G_values);
-        if (G_colInd) cudaFree(G_colInd);
-        
-        // Reallocate row pointer for SpGEMM
-        err = cudaMalloc(&G_rowPtr, (nStates + 1) * sizeof(Index));
-        if (err == cudaSuccess) {
-            // OPTIMIZATION: Use pooled WH_values buffer to avoid per-iteration allocation
-            success = sle::cuda::computeGainMatrixGPU(cusparseHandle,
-                                                      H_values, H_rowPtr, H_colInd,
-                                                      d_weights,
-                                                      G_values, G_rowPtr, G_colInd,
-                                                      nMeas, nStates, G_nnz,
-                                                      memoryPool_.d_WH_values, memoryPool_.WH_valuesSize);
+        if (!reuse) {
+            if (G_rowPtr) cudaFree(G_rowPtr);
+            if (G_values) cudaFree(G_values);
+            if (G_colInd) cudaFree(G_colInd);
+            
+            // Reallocate row pointer for SpGEMM
+            cudaError_t err = cudaMalloc(&G_rowPtr, (nStates + 1) * sizeof(Index));
+            if (err != cudaSuccess) {
+                 throw std::runtime_error("Failed to allocate GPU memory for gain matrix row pointers");
+            }
         }
+        
+        // OPTIMIZATION: Use pooled WH_values buffer to avoid per-iteration allocation
+        success = sle::cuda::computeGainMatrixGPU(cusparseHandle,
+                                                  H_values, H_rowPtr, H_colInd,
+                                                  d_weights,
+                                                  G_values, G_rowPtr, G_colInd,
+                                                  nMeas, nStates, G_nnz,
+                                                  memoryPool_.d_WH_values, memoryPool_.WH_valuesSize);
     }
     
     if (!success || G_nnz == 0) {
-        if (G_rowPtr) cudaFree(G_rowPtr);
-        if (G_values) cudaFree(G_values);
-        if (G_colInd) cudaFree(G_colInd);
+        if (!reuse) {
+            if (G_rowPtr) cudaFree(G_rowPtr);
+            if (G_values) cudaFree(G_values);
+            if (G_colInd) cudaFree(G_colInd);
+        }
         throw std::runtime_error("GPU gain matrix computation failed - CUDA-exclusive, no CPU fallback");
     }
     
-    // Build SparseMatrix directly from device pointers (avoids host-device copy)
-    // SparseMatrix takes ownership of the device memory
-    G.buildFromDevicePointers(G_values, G_rowPtr, G_colInd, nStates, nStates, G_nnz);
+    // Only buildFromDevicePointers if NOT reusing (to avoid double ownership/clear issues)
+    if (!reuse) {
+        // Build SparseMatrix directly from device pointers (avoids host-device copy)
+        // SparseMatrix takes ownership of the device memory
+        G.buildFromDevicePointers(G_values, G_rowPtr, G_colInd, nStates, nStates, G_nnz);
+    }
 }
 
 
 void Solver::solveLinearSystemGPU(const SparseMatrix& G, Real* d_rhs, Real* d_deltaX, Index nStates) {
     // CUDA-EXCLUSIVE: Solve G * Δx = rhs entirely on GPU using cuSOLVER
-    static std::unique_ptr<CuSOLVERIntegration> cusolver;
-    
-    if (!cusolver) {
-        cusolver = std::make_unique<CuSOLVERIntegration>();
-        cusolver->initialize();
-        // OPTIMIZATION: Associate cuSOLVER handle with compute stream
-        if (streamInitialized_ && computeStream_) {
-            cusolver->setStream(computeStream_);
-        }
-    }
     
     // Solve directly on GPU without host transfers
-    if (!cusolver->solveSparseGPU(G, d_rhs, d_deltaX, nStates)) {
+    if (!cusolver_->solveSparseGPU(G, d_rhs, d_deltaX, nStates)) {
         // If solve fails, zero out deltaX (should not happen in normal operation)
-        cudaStream_t stream = streamInitialized_ ? computeStream_ : nullptr;
+    cudaStream_t stream = computeStream_;
         cudaMemsetAsync(d_deltaX, 0, nStates * sizeof(Real), stream ? stream : 0);
     }
 }

@@ -106,7 +106,6 @@ set(SOURCES
     src/measurements/VirtualMeasurementGenerator.cpp
     src/measurements/PseudoMeasurementGenerator.cpp
     src/utils/LoadDistributor.cpp
-    src/utils/EstimationComparator.cpp
     src/multiarea/MultiAreaEstimator.cpp
     src/observability/OptimalPlacement.cpp
 )
@@ -121,11 +120,9 @@ set(CUDA_SOURCES
     src/math/CuSOLVERIntegration.cu
     src/math/LoadFlow.cu
     src/cuda/CudaSparseOps.cu
-    src/cuda/CudaMemoryMonitor.cu
     src/cuda/CudaSolverOps.cu
     src/cuda/CudaReduction.cu
     src/cuda/CudaKernels.cu
-    src/cuda/UnifiedCudaMemoryPool.cu
     src/cuda/CudaNetworkKernels.cu
 )
 

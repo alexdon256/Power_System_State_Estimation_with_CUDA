@@ -11,6 +11,7 @@
 #include <sle/model/TelemetryData.h>
 #include <sle/model/StateVector.h>
 #include <sle/math/Solver.h>
+#include <sle/baddata/BadDataDetector.h>
 #include <chrono>
 
 namespace sle {
@@ -50,6 +51,36 @@ std::shared_ptr<model::TelemetryData> StateEstimator::getTelemetryData() const {
 
 
 StateEstimationResult StateEstimator::estimate() {
+    return estimateInternal(solverConfig_);
+}
+
+StateEstimationResult StateEstimator::estimateIncremental() {
+    // Use relaxed tolerance and fewer iterations for incremental updates (faster convergence)
+    math::SolverConfig incrementalConfig = solverConfig_;
+    incrementalConfig.tolerance = solverConfig_.tolerance * 10.0;  // Relaxed for speed
+    incrementalConfig.maxIterations = std::min(solverConfig_.maxIterations, 10);
+    
+    return estimateInternal(incrementalConfig);
+}
+
+baddata::BadDataResult StateEstimator::detectBadData() {
+    baddata::BadDataResult result;
+    result.hasBadData = false;
+    
+    if (!network_ || !telemetry_ || !currentState_) {
+        return result;
+    }
+    
+    // Perform bad data detection using the solver's measurement functions
+    // This reuses the GPU data (topology, state) from the last estimation
+    baddata::BadDataDetector detector;
+    result = detector.detectBadData(*telemetry_, *currentState_, *network_, 
+                                   &solver_->getMeasurementFunctions());
+    
+    return result;
+}
+
+StateEstimationResult StateEstimator::estimateInternal(const math::SolverConfig& config) {
     if (!network_ || !telemetry_) {
         StateEstimationResult result;
         result.converged = false;
@@ -63,8 +94,12 @@ StateEstimationResult StateEstimator::estimate() {
     }
     
     // Run estimation
-    solver_->setConfig(solverConfig_);
-    math::SolverResult solverResult = solver_->solve(*currentState_, *network_, *telemetry_);
+    solver_->setConfig(config);
+    
+    // Check if we can reuse Jacobian structure (topology not updated)
+    bool reuseStructure = !modelUpdated_.load() && !telemetryUpdated_.load();
+    
+    math::SolverResult solverResult = solver_->solve(*currentState_, *network_, *telemetry_, reuseStructure);
     
     StateEstimationResult result;
     result.converged = solverResult.converged;
@@ -77,50 +112,11 @@ StateEstimationResult StateEstimator::estimate() {
         std::chrono::system_clock::now().time_since_epoch()).count();
     
     // Update all computed values from GPU (optimized - reuses GPU data from solver)
-    // All computations are GPU-accelerated and happen automatically after estimation
     if (network_) {
         solver_->storeComputedValues(*currentState_, *network_);
     }
     
     modelUpdated_.store(false);
-    telemetryUpdated_.store(false);
-    
-    return result;
-}
-
-StateEstimationResult StateEstimator::estimateIncremental() {
-    // Use current state as initial guess for faster convergence
-    // This is optimized for real-time updates where state changes are small
-    if (!network_ || !telemetry_) {
-        StateEstimationResult result;
-        result.converged = false;
-        result.message = "Network or telemetry data not set";
-        return result;
-    }
-    
-    // Use relaxed tolerance and fewer iterations for incremental updates (faster convergence)
-    math::SolverConfig incrementalConfig = solverConfig_;
-    incrementalConfig.tolerance = solverConfig_.tolerance * 10.0;  // Relaxed for speed
-    incrementalConfig.maxIterations = std::min(solverConfig_.maxIterations, 10);
-    
-    solver_->setConfig(incrementalConfig);
-    math::SolverResult solverResult = solver_->solve(*currentState_, *network_, *telemetry_);
-    
-    StateEstimationResult result;
-    result.converged = solverResult.converged;
-    result.iterations = solverResult.iterations;
-    result.finalNorm = solverResult.finalNorm;
-    result.objectiveValue = solverResult.objectiveValue;
-    result.message = solverResult.message;
-    result.state = std::make_unique<model::StateVector>(*currentState_);
-    result.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    
-    // Update all computed values from GPU (optimized - reuses GPU data from solver)
-    if (network_) {
-        solver_->storeComputedValues(*currentState_, *network_);
-    }
-    
     telemetryUpdated_.store(false);
     
     return result;
@@ -222,4 +218,3 @@ bool StateEstimator::isReady() const {
 
 } // namespace interface
 } // namespace sle
-

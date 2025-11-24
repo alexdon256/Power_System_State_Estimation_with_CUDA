@@ -14,7 +14,6 @@
 #include <sle/cuda/CudaDataManager.h>
 #include <sle/cuda/CudaNetworkUtils.h>
 #include <sle/cuda/CudaUtils.h>
-#include <sle/cuda/UnifiedCudaMemoryPool.h>
 #include <cuda_runtime.h>
 #endif
 
@@ -26,23 +25,15 @@
 namespace sle {
 namespace model {
 
-#ifdef USE_CUDA
-// NetworkModel now uses UnifiedCudaMemoryPool instead of its own pool
-// This eliminates duplicate allocations and improves memory utilization
-#endif
-
 NetworkModel::NetworkModel()
 #ifdef USE_CUDA
-    : useUnifiedPool_(true)
-    , deviceDataDirty_(true)
-    , adjacencyDirty_(true)
-#else
-    : adjacencyDirty_(true)
+    : deviceDataDirty_(true)
+    , internalDataManager_(nullptr)
 #endif
+    , adjacencyDirty_(true)
     , baseMVA_(100.0)
     , referenceBus_(-1) {
     // Initialization order: CUDA members (if enabled) -> adjacencyDirty_ -> baseMVA_ -> referenceBus_
-    // NetworkModel now uses UnifiedCudaMemoryPool by default (eliminates duplicate allocations)
 }
 
 NetworkModel::~NetworkModel() = default;
@@ -268,35 +259,6 @@ Index NetworkModel::getBranchIndex(BranchId id) const {
     return (it != branchIndexMap_.end()) ? it->second : -1;
 }
 
-void NetworkModel::removeBus(BusId id) {
-    auto it = busIndexMap_.find(id);
-    if (it != busIndexMap_.end()) {
-        Index idx = it->second;
-        buses_.erase(buses_.begin() + idx);
-        busIndexMap_.erase(it);
-        
-        // Update indices for all buses after the removed one (indices shifted down by 1)
-        for (size_t i = idx; i < buses_.size(); ++i) {
-            BusId busId = buses_[i]->getId();
-            busIndexMap_[busId] = static_cast<Index>(i);
-        }
-        
-        // Update name index if bus had a name
-        for (auto itName = busNameMap_.begin(); itName != busNameMap_.end();) {
-            if (itName->second == idx) {
-                itName = busNameMap_.erase(itName);
-            } else if (itName->second > idx) {
-                --itName->second;  // Adjust index for buses after removed one
-                ++itName;
-            } else {
-                ++itName;
-            }
-        }
-        
-        invalidateCaches();
-    }
-}
-
 void NetworkModel::updateBus(BusId id, const Bus& busData) {
     // Direct lookup
     auto it = busIndexMap_.find(id);
@@ -427,57 +389,11 @@ void NetworkModel::updateAdjacencyLists() const {
 }
 
 #ifdef USE_CUDA
-void NetworkModel::ensureGPUCapacity(size_t nBuses, size_t nBranches) const {
-    if (useUnifiedPool_) {
-        // Use unified memory pool (eliminates duplicate allocations)
-        auto& unifiedPool = cuda::UnifiedCudaMemoryPool::getInstance();
-        
-        // Get shared buffers from unified pool
-        Real* d_v = nullptr;
-        Real* d_theta = nullptr;
-        size_t vSize = 0, thetaSize = 0;
-        unifiedPool.ensureStateBuffers(nBuses, d_v, vSize, d_theta, thetaSize);
-        
-        sle::cuda::DeviceBus* d_buses = nullptr;
-        sle::cuda::DeviceBranch* d_branches = nullptr;
-        size_t busesSize = 0, branchesSize = 0;
-        unifiedPool.ensureNetworkBuffers(nBuses, nBranches, d_buses, busesSize, d_branches, branchesSize);
-        
-        Real* d_pInjection = nullptr;
-        Real* d_qInjection = nullptr;
-        size_t pInjectionSize = 0, qInjectionSize = 0;
-        unifiedPool.ensurePowerInjectionBuffers(nBuses, d_pInjection, pInjectionSize, d_qInjection, qInjectionSize);
-        
-        Real* d_pFlow = nullptr;
-        Real* d_qFlow = nullptr;
-        size_t pFlowSize = 0, qFlowSize = 0;
-        unifiedPool.ensurePowerFlowBuffers(nBranches, d_pFlow, pFlowSize, d_qFlow, qFlowSize);
-        
-        Real* d_pMW = nullptr;
-        Real* d_qMVAR = nullptr;
-        Real* d_iPU = nullptr;
-        Real* d_iAmps = nullptr;
-        size_t pMWSize = 0, qMVARSize = 0, iPUSize = 0, iAmpsSize = 0;
-        unifiedPool.ensureDerivedQuantityBuffers(nBranches, d_pMW, pMWSize, d_qMVAR, qMVARSize, d_iPU, iPUSize, d_iAmps, iAmpsSize);
-        
-        // CSR adjacency buffers (size varies, managed separately)
-        size_t maxCSRSize = nBranches;
-        Index* d_branchFromBus = nullptr;
-        Index* d_branchToBus = nullptr;
-        Index* d_branchFromBusRowPtr = nullptr;
-        Index* d_branchToBusRowPtr = nullptr;
-        size_t branchFromBusSize = 0, branchToBusSize = 0;
-        size_t branchFromBusRowPtrSize = 0, branchToBusRowPtrSize = 0;
-        unifiedPool.ensureAdjacencyBuffers(nBuses, maxCSRSize,
-                                           d_branchFromBus, branchFromBusSize,
-                                           d_branchToBus, branchToBusSize,
-                                           d_branchFromBusRowPtr, branchFromBusRowPtrSize,
-                                           d_branchToBusRowPtr, branchToBusRowPtrSize);
-    } else {
-        // Legacy mode: allocate local buffers (for backward compatibility)
-        // This path is deprecated and should not be used in new code
-        // Kept for backward compatibility only
+sle::cuda::CudaDataManager* NetworkModel::getInternalDataManager() const {
+    if (!internalDataManager_) {
+        internalDataManager_ = std::make_shared<sle::cuda::CudaDataManager>();
     }
+    return internalDataManager_.get();
 }
 
 void NetworkModel::updateDeviceData() const {
@@ -502,83 +418,8 @@ void NetworkModel::updateDeviceData() const {
     }
     
     // OPTIMIZATION: Use CudaNetworkUtils to build device data (eliminates duplicate code)
-    // This matches the approach used in MeasurementFunctions and JacobianMatrix
     sle::cuda::buildDeviceBuses(*this, cachedDeviceBuses_);
     sle::cuda::buildDeviceBranches(*this, cachedDeviceBranches_);
-    
-    // OPTIMIZATION: Try GPU-accelerated CSR building first (eliminates CPU-GPU transfer)
-    if (useUnifiedPool_) {
-        auto& unifiedPool = cuda::UnifiedCudaMemoryPool::getInstance();
-        
-        // Get DeviceBranch buffer from unified pool
-        sle::cuda::DeviceBranch* d_branches = nullptr;
-        size_t branchesSize = 0;
-        sle::cuda::DeviceBus* d_buses_temp = nullptr;
-        size_t busesSize = 0;
-        unifiedPool.ensureNetworkBuffers(nBuses, nBranches, d_buses_temp, busesSize, d_branches, branchesSize);
-        
-        if (d_branches) {
-            // Copy DeviceBranch data to GPU (one-time transfer)
-            cudaMemcpy(d_branches, cachedDeviceBranches_.data(), 
-                      nBranches * sizeof(sle::cuda::DeviceBranch), 
-                      cudaMemcpyHostToDevice);
-            
-            // Get CSR buffers from unified pool
-            size_t maxCSRSize = nBranches;
-            Index* d_branchFromBus = nullptr;
-            Index* d_branchToBus = nullptr;
-            Index* d_branchFromBusRowPtr = nullptr;
-            Index* d_branchToBusRowPtr = nullptr;
-            size_t branchFromBusSize = 0, branchToBusSize = 0;
-            size_t branchFromBusRowPtrSize = 0, branchToBusRowPtrSize = 0;
-            unifiedPool.ensureAdjacencyBuffers(nBuses, maxCSRSize,
-                                               d_branchFromBus, branchFromBusSize,
-                                               d_branchToBus, branchToBusSize,
-                                               d_branchFromBusRowPtr, branchFromBusRowPtrSize,
-                                               d_branchToBusRowPtr, branchToBusRowPtrSize);
-            
-            // Build CSR on GPU
-            if (sle::cuda::buildCSRAdjacencyListsGPU(
-                    d_branches, d_branchFromBus, d_branchToBus,
-                    d_branchFromBusRowPtr, d_branchToBusRowPtr,
-                    static_cast<Index>(nBranches), static_cast<Index>(nBuses), nullptr)) {
-                
-                // Copy results back to host (for compatibility with existing code)
-                // Resize host vectors to match GPU results
-                Index nnz_from = 0, nnz_to = 0;
-                if (nBuses > 0) {
-                    Index host_rowPtr[nBuses + 1];
-                    cudaMemcpy(host_rowPtr, d_branchFromBusRowPtr, (nBuses + 1) * sizeof(Index), cudaMemcpyDeviceToHost);
-                    nnz_from = host_rowPtr[nBuses];
-                    
-                    cudaMemcpy(host_rowPtr, d_branchToBusRowPtr, (nBuses + 1) * sizeof(Index), cudaMemcpyDeviceToHost);
-                    nnz_to = host_rowPtr[nBuses];
-                }
-                
-                cachedBranchFromBus_.resize(nnz_from);
-                cachedBranchToBus_.resize(nnz_to);
-                cachedBranchFromBusRowPtr_.resize(nBuses + 1);
-                cachedBranchToBusRowPtr_.resize(nBuses + 1);
-                
-                if (nnz_from > 0) {
-                    cudaMemcpy(cachedBranchFromBus_.data(), d_branchFromBus, 
-                              nnz_from * sizeof(Index), cudaMemcpyDeviceToHost);
-                }
-                if (nnz_to > 0) {
-                    cudaMemcpy(cachedBranchToBus_.data(), d_branchToBus, 
-                              nnz_to * sizeof(Index), cudaMemcpyDeviceToHost);
-                }
-                cudaMemcpy(cachedBranchFromBusRowPtr_.data(), d_branchFromBusRowPtr, 
-                          (nBuses + 1) * sizeof(Index), cudaMemcpyDeviceToHost);
-                cudaMemcpy(cachedBranchToBusRowPtr_.data(), d_branchToBusRowPtr, 
-                          (nBuses + 1) * sizeof(Index), cudaMemcpyDeviceToHost);
-                
-                deviceDataDirty_ = false;
-                return;  // Success using GPU
-            }
-            // If GPU build failed, fall through to CPU version
-        }
-    }
     
     // Fallback: Use CPU version (for backward compatibility or when GPU unavailable)
     sle::cuda::buildCSRAdjacencyLists(*this,
@@ -603,7 +444,8 @@ void NetworkModel::computePowerInjections(const StateVector& state) {
     }
     
     // Resize cached vectors only if network size changed
-    if (cachedPInjection_.size() != nBuses) {
+    // Only grow vectors, never shrink, to avoid reallocations
+    if (cachedPInjection_.size() < nBuses) {
         cachedPInjection_.resize(nBuses);
         cachedQInjection_.resize(nBuses);
     }
@@ -654,159 +496,66 @@ void NetworkModel::computePowerInjections(const StateVector& state,
     std::fill(qInjection.begin(), qInjection.end(), 0.0);
     
 #ifdef USE_CUDA
-    // OPTIMIZATION: Use shared CudaDataManager if provided (eliminates duplicate allocations)
-    if (dataManager && dataManager->isInitialized()) {
-        // Use shared data manager - reuses GPU data already allocated
-        try {
-            // Update state in shared data manager
-            const auto& v = state.getMagnitudes();
-            const auto& theta = state.getAngles();
-            dataManager->updateState(v.data(), theta.data(), static_cast<Index>(nBuses));
-            
-            // Update network data if needed (builds CSR format)
-            updateDeviceData();
-            
-            // Update network data in shared data manager
-            dataManager->updateNetwork(
-                cachedDeviceBuses_.data(),
-                cachedDeviceBranches_.data(),
-                static_cast<Index>(nBuses),
-                static_cast<Index>(nBranches));
-            
-            // Update adjacency lists in shared data manager
-            dataManager->updateAdjacency(
-                cachedBranchFromBus_.data(),
-                cachedBranchFromBusRowPtr_.data(),
-                cachedBranchToBus_.data(),
-                cachedBranchToBusRowPtr_.data(),
-                static_cast<Index>(nBuses),
-                static_cast<Index>(cachedBranchFromBus_.size()),
-                static_cast<Index>(cachedBranchToBus_.size()));
-            
-            // Launch GPU kernel using shared data manager pointers
-            sle::cuda::computeAllPowerInjectionsGPU(
-                dataManager->getStateV(),
-                dataManager->getStateTheta(),
-                dataManager->getBuses(),
-                dataManager->getBranches(),
-                dataManager->getBranchFromBus(),
-                dataManager->getBranchFromBusRowPtr(),
-                dataManager->getBranchToBus(),
-                dataManager->getBranchToBusRowPtr(),
-                dataManager->getPInjection(),
-                dataManager->getQInjection(),
-                static_cast<Index>(nBuses),
-                static_cast<Index>(nBranches));
-            
-            // Copy back results
-            cudaMemcpy(pInjection.data(), dataManager->getPInjection(), 
-                      nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
-            cudaMemcpy(qInjection.data(), dataManager->getQInjection(), 
-                      nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
-            
-            return;  // Success using shared data manager
-        } catch (const std::exception& e) {
-            // Fall through to local pool if shared manager fails
-            // (for backward compatibility)
-        }
+    // Determine which data manager to use
+    sle::cuda::CudaDataManager* activeManager = dataManager;
+    if (!activeManager) {
+        activeManager = getInternalDataManager();
     }
     
-    // Fallback: Use unified memory pool (when dataManager not provided)
-    // CUDA-EXCLUSIVE: GPU required
     try {
-        // Ensure unified memory pool has capacity
-        ensureGPUCapacity(nBuses, nBranches);
-        
-        // Get buffers from unified pool
-        auto& unifiedPool = cuda::UnifiedCudaMemoryPool::getInstance();
-        
-        Real* d_v = nullptr;
-        Real* d_theta = nullptr;
-        size_t vSize = 0, thetaSize = 0;
-        unifiedPool.ensureStateBuffers(nBuses, d_v, vSize, d_theta, thetaSize);
-        
-        sle::cuda::DeviceBus* d_buses = nullptr;
-        sle::cuda::DeviceBranch* d_branches = nullptr;
-        size_t busesSize = 0, branchesSize = 0;
-        unifiedPool.ensureNetworkBuffers(nBuses, nBranches, d_buses, busesSize, d_branches, branchesSize);
-        
-        Real* d_pInjection = nullptr;
-        Real* d_qInjection = nullptr;
-        size_t pInjectionSize = 0, qInjectionSize = 0;
-        unifiedPool.ensurePowerInjectionBuffers(nBuses, d_pInjection, pInjectionSize, d_qInjection, qInjectionSize);
-        
-        size_t maxCSRSize = nBranches;
-        Index* d_branchFromBus = nullptr;
-        Index* d_branchToBus = nullptr;
-        Index* d_branchFromBusRowPtr = nullptr;
-        Index* d_branchToBusRowPtr = nullptr;
-        size_t branchFromBusSize = 0, branchToBusSize = 0;
-        size_t branchFromBusRowPtrSize = 0, branchToBusRowPtrSize = 0;
-        unifiedPool.ensureAdjacencyBuffers(nBuses, maxCSRSize,
-                                           d_branchFromBus, branchFromBusSize,
-                                           d_branchToBus, branchToBusSize,
-                                           d_branchFromBusRowPtr, branchFromBusRowPtrSize,
-                                           d_branchToBusRowPtr, branchToBusRowPtrSize);
-        
-        // Check if allocations succeeded
-        if (!d_v || !d_theta || !d_buses || !d_branches ||
-            !d_branchFromBus || !d_branchToBus ||
-            !d_branchFromBusRowPtr || !d_branchToBusRowPtr ||
-            !d_pInjection || !d_qInjection) {
-            throw std::runtime_error("CUDA memory allocation failed for power injections");
+        // Initialize if needed (allocates GPU memory)
+        if (!activeManager->isInitialized()) {
+            activeManager->initialize(static_cast<Index>(nBuses), 
+                                     static_cast<Index>(nBranches), 
+                                     0); // No measurements needed for power injections
         }
         
-        // Update cached device data if needed (builds CSR format)
+        // Update state in shared data manager
+        const auto& v = state.getMagnitudes();
+        const auto& theta = state.getAngles();
+        activeManager->updateState(v.data(), theta.data(), static_cast<Index>(nBuses));
+        
+        // Update network data if needed (builds CSR format)
         updateDeviceData();
         
-        // Get state vectors
-        std::vector<Real> v = state.getMagnitudes();
-        std::vector<Real> theta = state.getAngles();
+        // Update network data in shared data manager
+        activeManager->updateNetwork(
+            cachedDeviceBuses_.data(),
+            cachedDeviceBranches_.data(),
+            static_cast<Index>(nBuses),
+            static_cast<Index>(nBranches));
         
-        // Copy to device (reuse existing allocations from unified pool)
-        cudaMemcpy(d_v, v.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_theta, theta.data(), nBuses * sizeof(Real), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_buses, cachedDeviceBuses_.data(), 
-                  nBuses * sizeof(sle::cuda::DeviceBus), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_branches, cachedDeviceBranches_.data(), 
-                  nBranches * sizeof(sle::cuda::DeviceBranch), cudaMemcpyHostToDevice);
+        // Update adjacency lists in shared data manager
+        activeManager->updateAdjacency(
+            cachedBranchFromBus_.data(),
+            cachedBranchFromBusRowPtr_.data(),
+            cachedBranchToBus_.data(),
+            cachedBranchToBusRowPtr_.data(),
+            static_cast<Index>(nBuses),
+            static_cast<Index>(cachedBranchFromBus_.size()),
+            static_cast<Index>(cachedBranchToBus_.size()));
         
-        // Copy CSR format: column indices and row pointers
-        size_t fromCSRSize = cachedBranchFromBus_.size();
-        size_t toCSRSize = cachedBranchToBus_.size();
-        
-        // Validate CSR sizes match allocated memory
-        if (fromCSRSize > branchFromBusSize || toCSRSize > branchToBusSize) {
-            throw std::runtime_error("CUDA CSR buffer size mismatch for power injections");
-        }
-        
-        // Safe to copy - sizes are valid
-        if (fromCSRSize > 0) {
-            cudaMemcpy(d_branchFromBus, cachedBranchFromBus_.data(), 
-                      fromCSRSize * sizeof(Index), cudaMemcpyHostToDevice);
-        }
-        if (toCSRSize > 0) {
-            cudaMemcpy(d_branchToBus, cachedBranchToBus_.data(), 
-                      toCSRSize * sizeof(Index), cudaMemcpyHostToDevice);
-        }
-        cudaMemcpy(d_branchFromBusRowPtr, cachedBranchFromBusRowPtr_.data(), 
-                  (nBuses + 1) * sizeof(Index), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_branchToBusRowPtr, cachedBranchToBusRowPtr_.data(), 
-                  (nBuses + 1) * sizeof(Index), cudaMemcpyHostToDevice);
-        
-        // Launch GPU kernel with CSR format (O(avg_degree) complexity)
+        // Launch GPU kernel using shared data manager pointers
         sle::cuda::computeAllPowerInjectionsGPU(
-            d_v, d_theta, d_buses, d_branches,
-            d_branchFromBus, d_branchFromBusRowPtr,
-            d_branchToBus, d_branchToBusRowPtr,
-            d_pInjection, d_qInjection,
-            static_cast<Index>(nBuses), static_cast<Index>(nBranches));
+            activeManager->getStateV(),
+            activeManager->getStateTheta(),
+            activeManager->getBuses(),
+            activeManager->getBranches(),
+            activeManager->getBranchFromBus(),
+            activeManager->getBranchFromBusRowPtr(),
+            activeManager->getBranchToBus(),
+            activeManager->getBranchToBusRowPtr(),
+            activeManager->getPInjection(),
+            activeManager->getQInjection(),
+            static_cast<Index>(nBuses),
+            static_cast<Index>(nBranches));
         
-        // Copy back (async could be used here for better performance)
-        cudaMemcpy(pInjection.data(), d_pInjection, 
+        // Copy back results
+        cudaMemcpy(pInjection.data(), activeManager->getPInjection(), 
                   nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaMemcpy(qInjection.data(), d_qInjection, 
+        cudaMemcpy(qInjection.data(), activeManager->getQInjection(), 
                   nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
+        
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("CUDA power injection computation failed: ") + e.what());
     }
@@ -818,4 +567,3 @@ void NetworkModel::computePowerInjections(const StateVector& state,
 
 } // namespace model
 } // namespace sle
-

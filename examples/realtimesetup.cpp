@@ -114,7 +114,7 @@ int main(int argc, char* argv[]) {
         estimator.setTelemetryData(telemetryShared);
         
         // Real-time mode: Fast, relaxed tolerance
-        estimator.configureForRealTime(1e-5, 15, true);  // tolerance, maxIter, useGPU
+        estimator.configureForRealTime(1e-5, 15);  // tolerance, maxIterations (CUDA-exclusive)
         std::cout << "✓ Configured for real-time operation\n";
         std::cout << "  - Tolerance: 1e-5\n";
         std::cout << "  - Max iterations: 15\n";

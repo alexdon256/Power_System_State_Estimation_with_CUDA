@@ -21,15 +21,24 @@ BadDataDetector::BadDataDetector() : normalizedResidualThreshold_(3.0) {
 BadDataResult BadDataDetector::detectBadDataChiSquare(
     const model::TelemetryData& telemetry,
     const model::StateVector& state,
-    const model::NetworkModel& network) {
+    const model::NetworkModel& network,
+    math::MeasurementFunctions* measFuncs) {
     
     BadDataResult result;
     result.hasBadData = false;
     
     // Evaluate measurement functions
-    math::MeasurementFunctions measFuncs;
+    // Reuse measFuncs if provided, otherwise create local
+    std::unique_ptr<math::MeasurementFunctions> localMeasFuncs;
+    math::MeasurementFunctions* pMeasFuncs = measFuncs;
+    
+    if (!pMeasFuncs) {
+        localMeasFuncs = std::make_unique<math::MeasurementFunctions>();
+        pMeasFuncs = localMeasFuncs.get();
+    }
+    
     std::vector<Real> hx;
-    measFuncs.evaluate(state, network, telemetry, hx);
+    pMeasFuncs->evaluate(state, network, telemetry, hx);
     
     // Compute residuals, weights, and normalized residuals in a single pass
     std::vector<Real> residuals;
@@ -78,7 +87,8 @@ BadDataResult BadDataDetector::detectBadDataLNR(
     const model::TelemetryData& telemetry,
     const model::StateVector& state,
     const model::NetworkModel& network,
-    const std::vector<Real>* normalizedResidualsOverride) {
+    const std::vector<Real>* normalizedResidualsOverride,
+    math::MeasurementFunctions* measFuncs) {
     
     BadDataResult result;
     result.hasBadData = false;
@@ -87,7 +97,7 @@ BadDataResult BadDataDetector::detectBadDataLNR(
     if (normalizedResidualsOverride && !normalizedResidualsOverride->empty()) {
         normalizedResiduals = *normalizedResidualsOverride;
     } else {
-        normalizedResiduals = computeNormalizedResiduals(telemetry, state, network);
+        normalizedResiduals = computeNormalizedResiduals(telemetry, state, network, measFuncs);
     }
     
     // Find largest normalized residual
@@ -118,15 +128,16 @@ BadDataResult BadDataDetector::detectBadDataLNR(
 BadDataResult BadDataDetector::detectBadData(
     const model::TelemetryData& telemetry,
     const model::StateVector& state,
-    const model::NetworkModel& network) {
+    const model::NetworkModel& network,
+    math::MeasurementFunctions* measFuncs) {
     
     // Use chi-square test first, then LNR for identification
-    BadDataResult result = detectBadDataChiSquare(telemetry, state, network);
+    BadDataResult result = detectBadDataChiSquare(telemetry, state, network, measFuncs);
     
     if (result.hasBadData) {
         // Refine using LNR without re-evaluating measurement functions
         BadDataResult lnrResult = detectBadDataLNR(
-            telemetry, state, network, &result.normalizedResiduals);
+            telemetry, state, network, &result.normalizedResiduals, measFuncs);
         if (lnrResult.hasBadData) {
             // Combine LNR identification details
             result.badDeviceIds.insert(result.badDeviceIds.end(),
@@ -186,11 +197,20 @@ void BadDataDetector::removeBadMeasurements(model::TelemetryData& telemetry,
 std::vector<Real> BadDataDetector::computeNormalizedResiduals(
     const model::TelemetryData& telemetry,
     const model::StateVector& state,
-    const model::NetworkModel& network) {
+    const model::NetworkModel& network,
+    math::MeasurementFunctions* measFuncs) {
     
-    math::MeasurementFunctions measFuncs;
+    // Reuse measFuncs if provided
+    std::unique_ptr<math::MeasurementFunctions> localMeasFuncs;
+    math::MeasurementFunctions* pMeasFuncs = measFuncs;
+    
+    if (!pMeasFuncs) {
+        localMeasFuncs = std::make_unique<math::MeasurementFunctions>();
+        pMeasFuncs = localMeasFuncs.get();
+    }
+    
     std::vector<Real> hx;
-    measFuncs.evaluate(state, network, telemetry, hx);
+    pMeasFuncs->evaluate(state, network, telemetry, hx);
     
     std::vector<Real> normalizedResiduals;
     const auto& measurements = telemetry.getMeasurements();
@@ -217,4 +237,3 @@ Real BadDataDetector::computeChiSquare(const std::vector<Real>& residuals,
 
 } // namespace baddata
 } // namespace sle
-

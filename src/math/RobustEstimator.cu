@@ -7,7 +7,6 @@
 #include <sle/math/RobustEstimator.h>
 #include <sle/math/Solver.h>
 #include <sle/math/MeasurementFunctions.h>
-#include <sle/math/JacobianMatrix.h>
 #include <cmath>
 #include <algorithm>
 
@@ -19,13 +18,13 @@ using model::NetworkModel;
 using model::TelemetryData;
 using model::MeasurementModel;
 
-RobustEstimator::RobustEstimator() {
+RobustEstimator::RobustEstimator() : solver_(std::make_unique<Solver>()) {
     config_.weightFunction = RobustWeightFunction::HUBER;
     config_.tuningConstant = 1.345;
 }
 
 RobustEstimator::RobustEstimator(const RobustEstimatorConfig& config)
-    : config_(config) {
+    : config_(config), solver_(std::make_unique<Solver>()) {
 }
 
 RobustEstimator::RobustResult RobustEstimator::estimate(
@@ -46,53 +45,33 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
     const auto& measurements = telemetry.getMeasurements();
     size_t nMeas = measurements.size();
     
-    // Initial weights (standard WLS)
-    std::vector<Real> weights(nMeas);
-    for (size_t i = 0; i < nMeas; ++i) {
-        weights[i] = measurements[i]->getWeight();
-    }
+    // Robust scaling factors (0.0 to 1.0)
+    // Initialize to 1.0 (standard WLS)
+    std::vector<Real> robustScaling(nMeas, 1.0);
+    result.weights = robustScaling; // Initial weights in result
     
     MeasurementFunctions measFuncs;
-    JacobianMatrix jacobian;
-    Solver solver;
+    measFuncs.setDataManager(solver_->getDataManager());
     
     SolverConfig solverConfig;
     solverConfig.tolerance = config_.tolerance;
     solverConfig.maxIterations = 10;  // Fewer iterations per IRLS step
-    // CUDA-EXCLUSIVE: All operations use GPU
-    solver.setConfig(solverConfig);
+    solver_->setConfig(solverConfig);
     
     // IRLS iterations
     for (Index irlsIter = 0; irlsIter < config_.maxIterations; ++irlsIter) {
-        // Create weighted telemetry with current robust weights
-        auto weightedTelemetry = std::make_unique<TelemetryData>();
-        for (size_t i = 0; i < measurements.size(); ++i) {
-            Real robustWeight = weights[i];
-            Real effectiveStdDev = measurements[i]->getStdDev() / sqrt(robustWeight);
-            
-            auto meas = std::make_unique<MeasurementModel>(
-                measurements[i]->getType(),
-                measurements[i]->getValue(),
-                effectiveStdDev,
-                measurements[i]->getDeviceId());
-            
-            if (measurements[i]->getLocation() >= 0) {
-                meas->setLocation(measurements[i]->getLocation());
-            }
-            if (measurements[i]->getFromBus() >= 0) {
-                meas->setBranchLocation(measurements[i]->getFromBus(),
-                                       measurements[i]->getToBus());
-            }
-            
-            weightedTelemetry->addMeasurement(std::move(meas));
+        // Calculate absolute weights for Solver
+        std::vector<Real> solverWeights(nMeas);
+        for (size_t i = 0; i < nMeas; ++i) {
+            solverWeights[i] = measurements[i]->getWeight() * robustScaling[i];
         }
         
-        // Solve weighted least squares
-        SolverResult solverResult = solver.solve(state, network, *weightedTelemetry);
+        // Solve weighted least squares with override weights
+        SolverResult solverResult = solver_->solve(state, network, telemetry, solverWeights);
         
-        if (!solverResult.converged) {
-            result.message = "Solver did not converge in IRLS iteration " + 
-                           std::to_string(irlsIter);
+        if (!solverResult.converged && irlsIter == 0) {
+            // If first iteration (standard WLS) fails, likely bad data or observability issue
+            result.message = "Initial WLS solution failed to converge";
             break;
         }
         
@@ -107,27 +86,28 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
             stdDevs[i] = measurements[i]->getStdDev();
         }
         
-        // Update robust weights
-        std::vector<Real> newWeights(nMeas);
-        computeRobustWeights(residuals, stdDevs, newWeights);
+        // Update robust weights (scaling factors)
+        std::vector<Real> newRobustScaling(nMeas);
+        computeRobustWeights(residuals, stdDevs, newRobustScaling);
         
         // Check convergence (weights stabilized)
         if (irlsIter > 0) {
             Real weightChange = 0.0;
-            for (size_t i = 0; i < newWeights.size() && i < result.weights.size(); ++i) {
-                weightChange += std::abs(newWeights[i] - result.weights[i]);
+            for (size_t i = 0; i < nMeas; ++i) {
+                weightChange += std::abs(newRobustScaling[i] - robustScaling[i]);
             }
             
             if (weightChange < config_.tolerance * nMeas) {
                 result.converged = true;
                 result.iterations = irlsIter + 1;
                 result.message = "Converged";
+                robustScaling = newRobustScaling;
                 break;
             }
         }
         
-        weights = newWeights;
-        result.weights = weights;
+        robustScaling = newRobustScaling;
+        result.weights = robustScaling;
         result.finalNorm = solverResult.finalNorm;
         result.objectiveValue = solverResult.objectiveValue;
     }
@@ -203,4 +183,3 @@ std::function<Real(Real)> RobustEstimator::getWeightFunction() const {
 
 } // namespace math
 } // namespace sle
-

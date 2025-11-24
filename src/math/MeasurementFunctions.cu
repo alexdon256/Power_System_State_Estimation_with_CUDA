@@ -69,6 +69,7 @@ cuda::CudaDataManager* MeasurementFunctions::getDataManager() const {
 Real* MeasurementFunctions::evaluateGPU(const StateVector& state, 
                                        const NetworkModel& network,
                                        const TelemetryData& telemetry,
+                                       bool reuseTopology,
                                        cudaStream_t stream) {
     const auto& measurements = telemetry.getMeasurements();
     const size_t nMeas = measurements.size();
@@ -78,10 +79,12 @@ Real* MeasurementFunctions::evaluateGPU(const StateVector& state,
     cuda::CudaDataManager* dataManager = pImpl_->getDataManager();
     
     // Initialize data manager if needed
+    // If reuseTopology is true, we assume sizes match and initialized
     if (!dataManager || 
-        pImpl_->nBuses != nBuses || 
-        pImpl_->nBranches != nBranches || 
-        pImpl_->nMeasurements != nMeas) {
+        (!reuseTopology && (
+            pImpl_->nBuses != nBuses || 
+            pImpl_->nBranches != nBranches || 
+            pImpl_->nMeasurements != nMeas))) {
         
         if (!dataManager) {
             pImpl_->ownDataManager = std::make_unique<cuda::CudaDataManager>();
@@ -97,60 +100,65 @@ Real* MeasurementFunctions::evaluateGPU(const StateVector& state,
         pImpl_->nBranches = nBranches;
         pImpl_->nMeasurements = nMeas;
         pImpl_->initialized = true;
+        
+        // Force update if reinitialized
+        reuseTopology = false;
     }
     
     const auto& v = state.getMagnitudes();
     const auto& theta = state.getAngles();
     dataManager->updateState(v.data(), theta.data(), static_cast<Index>(nBuses));
     
-    // Update network data if needed
-    if (pImpl_->deviceBuses_.size() != nBuses || pImpl_->deviceBranches_.size() != nBranches) {
-        cuda::buildDeviceBuses(network, pImpl_->deviceBuses_);
-        cuda::buildDeviceBranches(network, pImpl_->deviceBranches_);
-        cuda::buildCSRAdjacencyLists(network, 
-                                     pImpl_->branchFromBus_,
-                                     pImpl_->branchFromBusRowPtr_,
-                                     pImpl_->branchToBus_,
-                                     pImpl_->branchToBusRowPtr_);
-        
-        dataManager->updateNetwork(
-            pImpl_->deviceBuses_.data(), 
-            pImpl_->deviceBranches_.data(),
-            static_cast<Index>(nBuses), 
-            static_cast<Index>(nBranches));
-        
-        dataManager->updateAdjacency(
-            pImpl_->branchFromBus_.data(), 
-            pImpl_->branchFromBusRowPtr_.data(),
-            pImpl_->branchToBus_.data(), 
-            pImpl_->branchToBusRowPtr_.data(),
-            static_cast<Index>(nBuses),
-            static_cast<Index>(pImpl_->branchFromBus_.size()),
-            static_cast<Index>(pImpl_->branchToBus_.size()));
-    }
-    
-    if (pImpl_->measurementTypes_.size() != nMeas) {
-        pImpl_->measurementTypes_.clear();
-        pImpl_->measurementLocations_.clear();
-        pImpl_->measurementBranches_.clear();
-        
-        pImpl_->measurementTypes_.reserve(nMeas);
-        pImpl_->measurementLocations_.reserve(nMeas);
-        pImpl_->measurementBranches_.reserve(nMeas);
-        
-        for (const auto& meas : measurements) {
-            pImpl_->measurementTypes_.push_back(cuda::mapMeasurementTypeToIndex(meas->getType()));
-            pImpl_->measurementLocations_.push_back(network.getBusIndex(meas->getLocation()));
-            pImpl_->measurementBranches_.push_back(cuda::findBranchIndex(network, 
-                                                                         meas->getFromBus(), 
-                                                                         meas->getToBus()));
+    // Update network data only if not reusing topology
+    if (!reuseTopology) {
+        if (pImpl_->deviceBuses_.size() != nBuses || pImpl_->deviceBranches_.size() != nBranches) {
+            cuda::buildDeviceBuses(network, pImpl_->deviceBuses_);
+            cuda::buildDeviceBranches(network, pImpl_->deviceBranches_);
+            cuda::buildCSRAdjacencyLists(network, 
+                                         pImpl_->branchFromBus_,
+                                         pImpl_->branchFromBusRowPtr_,
+                                         pImpl_->branchToBus_,
+                                         pImpl_->branchToBusRowPtr_);
+            
+            dataManager->updateNetwork(
+                pImpl_->deviceBuses_.data(), 
+                pImpl_->deviceBranches_.data(),
+                static_cast<Index>(nBuses), 
+                static_cast<Index>(nBranches));
+            
+            dataManager->updateAdjacency(
+                pImpl_->branchFromBus_.data(), 
+                pImpl_->branchFromBusRowPtr_.data(),
+                pImpl_->branchToBus_.data(), 
+                pImpl_->branchToBusRowPtr_.data(),
+                static_cast<Index>(nBuses),
+                static_cast<Index>(pImpl_->branchFromBus_.size()),
+                static_cast<Index>(pImpl_->branchToBus_.size()));
         }
         
-        dataManager->updateMeasurements(
-            pImpl_->measurementTypes_.data(),
-            pImpl_->measurementLocations_.data(),
-            pImpl_->measurementBranches_.data(),
-            static_cast<Index>(nMeas));
+        if (pImpl_->measurementTypes_.size() != nMeas) {
+            pImpl_->measurementTypes_.clear();
+            pImpl_->measurementLocations_.clear();
+            pImpl_->measurementBranches_.clear();
+            
+            pImpl_->measurementTypes_.reserve(nMeas);
+            pImpl_->measurementLocations_.reserve(nMeas);
+            pImpl_->measurementBranches_.reserve(nMeas);
+            
+            for (const auto& meas : measurements) {
+                pImpl_->measurementTypes_.push_back(cuda::mapMeasurementTypeToIndex(meas->getType()));
+                pImpl_->measurementLocations_.push_back(network.getBusIndex(meas->getLocation()));
+                pImpl_->measurementBranches_.push_back(cuda::findBranchIndex(network, 
+                                                                             meas->getFromBus(), 
+                                                                             meas->getToBus()));
+            }
+            
+            dataManager->updateMeasurements(
+                pImpl_->measurementTypes_.data(),
+                pImpl_->measurementLocations_.data(),
+                pImpl_->measurementBranches_.data(),
+                static_cast<Index>(nMeas));
+        }
     }
     
     // OPTIMIZATION: Use stream for asynchronous execution

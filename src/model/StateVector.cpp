@@ -22,17 +22,39 @@ StateVector::StateVector(size_t nBuses) : nBuses_(nBuses) {
 void StateVector::resize(size_t nBuses) {
     nBuses_ = nBuses;
     
-    // Reserve capacity to avoid reallocations
     state_.reserve(2 * nBuses);
     angles_.reserve(nBuses);
     magnitudes_.reserve(nBuses);
     
-    state_.resize(2 * nBuses, 0.0);
-    angles_.resize(nBuses, 0.0);
-    magnitudes_.resize(nBuses, 1.0);
-    
-    // Initialize magnitudes to 1.0 p.u. (vectorized by compiler)
-    std::fill(magnitudes_.begin(), magnitudes_.end(), 1.0);
+    // Re-use memory to avoid reallocations
+    if (state_.capacity() >= 2 * nBuses) {
+        state_.resize(2 * nBuses);
+        // Zero out new elements if size increased
+        if (nBuses > nBuses_) {
+            std::fill(state_.begin() + 2 * nBuses_, state_.end(), 0.0);
+        }
+    } else {
+        state_.resize(2 * nBuses, 0.0);
+    }
+
+    if (angles_.capacity() >= nBuses) {
+        angles_.resize(nBuses);
+        if (nBuses > nBuses_) {
+            std::fill(angles_.begin() + nBuses_, angles_.end(), 0.0);
+        }
+    } else {
+        angles_.resize(nBuses, 0.0);
+    }
+
+    if (magnitudes_.capacity() >= nBuses) {
+        magnitudes_.resize(nBuses);
+        // New magnitudes should be 1.0
+        if (nBuses > nBuses_) {
+            std::fill(magnitudes_.begin() + nBuses_, magnitudes_.end(), 1.0);
+        }
+    } else {
+        magnitudes_.resize(nBuses, 1.0);
+    }
 }
 
 Real StateVector::getVoltageMagnitude(Index busIdx) const {

@@ -15,6 +15,13 @@
 #include <vector>
 #include <string>
 
+// Forward declaration
+namespace sle {
+namespace math {
+    class MeasurementFunctions;
+}
+}
+
 namespace sle {
 namespace baddata {
 
@@ -32,23 +39,29 @@ public:
     BadDataDetector();
     
     // Chi-square test for bad data detection
+    // measFuncs: Optional pointer to reuse existing MeasurementFunctions (avoids reallocation)
     BadDataResult detectBadDataChiSquare(
         const model::TelemetryData& telemetry,
         const model::StateVector& state,
-        const model::NetworkModel& network);
+        const model::NetworkModel& network,
+        math::MeasurementFunctions* measFuncs = nullptr);
     
     // Largest normalized residual test
+    // measFuncs: Optional pointer to reuse existing MeasurementFunctions (avoids reallocation)
     BadDataResult detectBadDataLNR(
         const model::TelemetryData& telemetry,
         const model::StateVector& state,
         const model::NetworkModel& network,
-        const std::vector<Real>* normalizedResidualsOverride = nullptr);
+        const std::vector<Real>* normalizedResidualsOverride = nullptr,
+        math::MeasurementFunctions* measFuncs = nullptr);
     
     // Combined detection method
+    // measFuncs: Optional pointer to reuse existing MeasurementFunctions (avoids reallocation)
     BadDataResult detectBadData(
         const model::TelemetryData& telemetry,
         const model::StateVector& state,
-        const model::NetworkModel& network);
+        const model::NetworkModel& network,
+        math::MeasurementFunctions* measFuncs = nullptr);
     
     // Remove bad measurements
     void removeBadMeasurements(model::TelemetryData& telemetry,
@@ -70,7 +83,8 @@ private:
     std::vector<Real> computeNormalizedResiduals(
         const model::TelemetryData& telemetry,
         const model::StateVector& state,
-        const model::NetworkModel& network);
+        const model::NetworkModel& network,
+        math::MeasurementFunctions* measFuncs);
     
     // Compute chi-square statistic
     Real computeChiSquare(const std::vector<Real>& residuals,
@@ -81,4 +95,3 @@ private:
 } // namespace sle
 
 #endif // SLE_BADDATA_BADDATADETECTOR_H
-

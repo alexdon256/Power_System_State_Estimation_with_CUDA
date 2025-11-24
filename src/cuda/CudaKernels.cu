@@ -968,6 +968,15 @@ __global__ void computeJacobianKernelCached(const Real* v, const Real* theta,
     Index tid = threadIdx.x;
     Index measIdx = blockIdx.x * blockDim.x + threadIdx.x;
     
+    // Initialize cache indices to invalid
+    if (tid < maxCachedBuses) {
+        cachedBusIndices[tid] = -1;
+    }
+    if (tid < maxCachedBranches) {
+        cachedBranchIndices[tid] = -1;
+    }
+    __syncthreads();
+    
     // Cooperative loading: threads in block load bus/branch data into shared memory
     // This reduces redundant global memory reads when multiple measurements access same data
     if (measIdx < nMeasurements) {

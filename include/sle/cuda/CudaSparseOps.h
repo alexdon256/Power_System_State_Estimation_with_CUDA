@@ -34,6 +34,7 @@ void weightedSparseMatVec(cusparseHandle_t handle,
                           Index nRows, Index nCols);
 
 // Scale sparse matrix rows by weights: H_scaled = W * H
+// Note: Extracts stream from cusparseHandle_t if available
 void scaleSparseMatrixRows(cusparseHandle_t handle,
                            const Real* H_values, const Index* H_rowPtr,
                            const Real* weights, Real* H_scaled,

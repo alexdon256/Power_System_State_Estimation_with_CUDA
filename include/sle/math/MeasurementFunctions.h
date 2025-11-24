@@ -40,9 +40,11 @@ public:
     
     // CUDA-EXCLUSIVE: Evaluate measurement functions h(x) on GPU
     // Returns GPU pointer to hx (data stays on GPU)
+    // reuseTopology: If true, skips re-uploading network/measurement structure (assumes unchanged)
     // stream: Optional CUDA stream for asynchronous execution
     Real* evaluateGPU(const model::StateVector& state, const model::NetworkModel& network,
-                     const model::TelemetryData& telemetry, cudaStream_t stream = nullptr);
+                     const model::TelemetryData& telemetry, bool reuseTopology = false, 
+                     cudaStream_t stream = nullptr);
     
     // Legacy: Evaluate and copy to host (for backward compatibility)
     void evaluate(const model::StateVector& state, const model::NetworkModel& network,

@@ -77,6 +77,9 @@ private:
     // Iteratively reweighted least squares (IRLS)
     RobustResult solveIRLS(model::StateVector& state, const model::NetworkModel& network,
                           const model::TelemetryData& telemetry);
+
+    // Persistent solver for reusing GPU allocations
+    std::unique_ptr<class Solver> solver_;
 };
 
 } // namespace math

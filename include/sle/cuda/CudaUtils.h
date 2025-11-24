@@ -238,6 +238,43 @@ inline bool allocatePinnedBuffer(T*& ptr, size_t& currentSize, size_t requiredSi
     return true;
 }
 
+// ============================================================================
+// Stream Synchronization Helpers
+// ============================================================================
+
+// Synchronize stream (unified helper)
+inline void synchronizeStream(cudaStream_t stream) {
+    if (stream) {
+        cudaStreamSynchronize(stream);
+    } else {
+        cudaDeviceSynchronize();
+    }
+}
+
+// ============================================================================
+// Async Memory Copy Helpers
+// ============================================================================
+
+// Async copy from host to device and synchronize
+template<typename T>
+inline void asyncCopyH2DAndSync(const T* src, T* dst, size_t count, cudaStream_t stream) {
+    cudaMemcpyAsync(dst, src, count * sizeof(T), cudaMemcpyHostToDevice, stream);
+    synchronizeStream(stream);
+}
+
+// Async copy from device to host and synchronize
+template<typename T>
+inline void asyncCopyD2HAndSync(const T* src, T* dst, size_t count, cudaStream_t stream) {
+    cudaMemcpyAsync(dst, src, count * sizeof(T), cudaMemcpyDeviceToHost, stream);
+    synchronizeStream(stream);
+}
+
+// Async copy from device to host (no sync - for batching)
+template<typename T>
+inline void asyncCopyD2H(const T* src, T* dst, size_t count, cudaStream_t stream) {
+    cudaMemcpyAsync(dst, src, count * sizeof(T), cudaMemcpyDeviceToHost, stream);
+}
+
 } // namespace cuda
 } // namespace sle
 

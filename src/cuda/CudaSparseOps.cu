@@ -112,10 +112,13 @@ __global__ void scaleSparseMatrixRowsKernel(const Real* H_values, const Index* H
 void scaleSparseMatrixRows(cusparseHandle_t handle,
                            const Real* H_values, const Index* H_rowPtr,
                            const Real* weights, Real* H_scaled,
-                           Index nRows, Index nnz,
-                           cudaStream_t stream) {
+                           Index nRows, Index nnz) {
     constexpr Index blockSize = 256;
     const Index gridSize = (nRows + blockSize - 1) / blockSize;
+    
+    cudaStream_t stream = 0;
+    cusparseGetStream(handle, &stream);
+    
     // OPTIMIZATION: Use stream for asynchronous execution
     scaleSparseMatrixRowsKernel<<<gridSize, blockSize, 0, stream>>>(
         H_values, H_rowPtr, weights, H_scaled, nRows);
@@ -136,6 +139,9 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
         cudaMemset(G_rowPtr, 0, (nStates + 1) * sizeof(Index));
         return true;
     }
+    
+    // Check if we can reuse existing output buffers
+    bool reuseBuffers = (G_values != nullptr && G_colInd != nullptr);
     
     Index H_nnz = H_rowPtr[nMeas] - H_rowPtr[0];
     if (H_nnz == 0) {
@@ -158,6 +164,7 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
             return false;
         }
     }
+    // Removed stream arg, it's extracted from handle inside
     scaleSparseMatrixRows(handle, H_values, H_rowPtr, weights, WH_values, nMeas, H_nnz);
     
     // Step 2: Create cuSPARSE descriptors for H and WH
@@ -187,11 +194,11 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
         return false;
     }
     
-    // G matrix descriptor (nStates x nStates) - output (initially empty)
-    Index* G_colInd_temp = nullptr;
-    Real* G_values_temp = nullptr;
-    status = cusparseCreateCsr(&matG, nStates, nStates, 0,
-                                G_rowPtr, G_colInd_temp, G_values_temp,
+    // G matrix descriptor (nStates x nStates) - output
+    // If reusing, provide existing pointers, otherwise null (to compute size first)
+    cusparseSpMatDescr_t matG;
+    status = cusparseCreateCsr(&matG, nStates, nStates, reuseBuffers ? G_nnz : 0,
+                                G_rowPtr, reuseBuffers ? G_colInd : nullptr, reuseBuffers ? G_values : nullptr,
                                 CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                                 CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
     if (status != CUSPARSE_STATUS_SUCCESS) {
@@ -305,41 +312,61 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
     }
     
     // Phase 3: Copy results
-    // First get the structure size
-    int64_t G_rows, G_cols, G_nnz_int64;
-    cusparseSpMatGetSize(matG, &G_rows, &G_cols, &G_nnz_int64);
-    G_nnz = static_cast<Index>(G_nnz_int64);
-    
-    if (G_nnz > 0) {
-        // Allocate output buffers
-        err = cudaMalloc(&G_values, G_nnz * sizeof(Real));
-        if (err != cudaSuccess) {
-            if (dBuffer1) cudaFree(dBuffer1);
-            if (dBuffer2) cudaFree(dBuffer2);
-            cusparseSpGEMM_destroyDescr(spgemmDesc);
-            cusparseDestroySpMat(matH);
-            cusparseDestroySpMat(matWH);
-            cusparseDestroySpMat(matG);
-            if (WH_values && !usePooledBuffer) cudaFree(WH_values);
-            return false;
-        }
+    // First get the structure size (if not reusing or to verify)
+    if (!reuseBuffers) {
+        int64_t G_rows, G_cols, G_nnz_int64;
+        cusparseSpMatGetSize(matG, &G_rows, &G_cols, &G_nnz_int64);
+        G_nnz = static_cast<Index>(G_nnz_int64);
         
-        err = cudaMalloc(&G_colInd, G_nnz * sizeof(Index));
-        if (err != cudaSuccess) {
-            cudaFree(G_values);
-            if (dBuffer1) cudaFree(dBuffer1);
-            if (dBuffer2) cudaFree(dBuffer2);
-            cusparseSpGEMM_destroyDescr(spgemmDesc);
-            cusparseDestroySpMat(matH);
-            cusparseDestroySpMat(matWH);
-            cusparseDestroySpMat(matG);
-            if (WH_values && !usePooledBuffer) cudaFree(WH_values);
-            return false;
+        if (G_nnz > 0) {
+            // Allocate output buffers
+            err = cudaMalloc(&G_values, G_nnz * sizeof(Real));
+            if (err != cudaSuccess) {
+                if (dBuffer1) cudaFree(dBuffer1);
+                if (dBuffer2) cudaFree(dBuffer2);
+                cusparseSpGEMM_destroyDescr(spgemmDesc);
+                cusparseDestroySpMat(matH);
+                cusparseDestroySpMat(matWH);
+                cusparseDestroySpMat(matG);
+                if (WH_values && !usePooledBuffer) cudaFree(WH_values);
+                return false;
+            }
+            
+            err = cudaMalloc(&G_colInd, G_nnz * sizeof(Index));
+            if (err != cudaSuccess) {
+                cudaFree(G_values);
+                if (dBuffer1) cudaFree(dBuffer1);
+                if (dBuffer2) cudaFree(dBuffer2);
+                cusparseSpGEMM_destroyDescr(spgemmDesc);
+                cusparseDestroySpMat(matH);
+                cusparseDestroySpMat(matWH);
+                cusparseDestroySpMat(matG);
+                if (WH_values && !usePooledBuffer) cudaFree(WH_values);
+                return false;
+            }
+            
+            // Set pointers for matG
+            cusparseCsrSetPointers(matG, G_rowPtr, G_colInd, G_values);
+            
+            // Compute values (Execution Phase 2 - write to buffers)
+            status = cusparseSpGEMM_compute(handle,
+                                            CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                            &alpha, matH, matWH, &beta, matG,
+                                            CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
+                                            spgemmDesc, &bufferSize2, dBuffer2);
+             if (status != CUSPARSE_STATUS_SUCCESS) {
+                cudaFree(G_values);
+                cudaFree(G_colInd);
+                if (dBuffer1) cudaFree(dBuffer1);
+                if (dBuffer2) cudaFree(dBuffer2);
+                cusparseSpGEMM_destroyDescr(spgemmDesc);
+                cusparseDestroySpMat(matH);
+                cusparseDestroySpMat(matWH);
+                cusparseDestroySpMat(matG);
+                if (WH_values && !usePooledBuffer) cudaFree(WH_values);
+                return false;
+            }
         }
-        
-        // Extract CSR data
-        size_t rowPtrSize, colIndSize, valuesSize;
-        cusparseCsrGet(G_rowPtr, &rowPtrSize, G_colInd, &colIndSize, G_values, &valuesSize, matG);
     }
     
     // Cleanup
@@ -443,7 +470,8 @@ __global__ void computeGainMatrixElementKernel(const Real* H_values, const Index
 // Compute gain matrix G = H^T * W * H directly on GPU using formula G_ij = sum_k(H_ki * w_k * H_kj)
 // This is an alternative to SpGEMM that may be faster for very sparse matrices
 // Returns true on success, false on failure
-bool computeGainMatrixDirectGPU(const Real* H_values, const Index* H_rowPtr, const Index* H_colInd,
+bool computeGainMatrixDirectGPU(cusparseHandle_t handle,
+                                const Real* H_values, const Index* H_rowPtr, const Index* H_colInd,
                                 const Real* weights,
                                 Real*& G_dense, Index nMeas, Index nStates) {
     if (nMeas == 0 || nStates == 0) {
@@ -455,6 +483,10 @@ bool computeGainMatrixDirectGPU(const Real* H_values, const Index* H_rowPtr, con
         return false;
     }
     
+    // Get stream from handle
+    cudaStream_t stream = 0;
+    cusparseGetStream(handle, &stream);
+    
     // Allocate dense matrix on GPU (nStates x nStates)
     cudaError_t err = cudaMalloc(&G_dense, nStates * nStates * sizeof(Real));
     if (err != cudaSuccess) {
@@ -462,7 +494,7 @@ bool computeGainMatrixDirectGPU(const Real* H_values, const Index* H_rowPtr, con
     }
     
     // Initialize to zero
-    cudaMemset(G_dense, 0, nStates * nStates * sizeof(Real));
+    cudaMemsetAsync(G_dense, 0, nStates * nStates * sizeof(Real), stream);
     
     // Choose kernel based on sparsity
     // For sparse matrices, use row-based kernel (each thread processes one row k)
@@ -471,7 +503,7 @@ bool computeGainMatrixDirectGPU(const Real* H_values, const Index* H_rowPtr, con
     
     // Use row-based kernel (more efficient for sparse H)
     Index gridSize = (nMeas + blockSize - 1) / blockSize;
-    computeGainMatrixDirectKernel<<<gridSize, blockSize>>>(
+    computeGainMatrixDirectKernel<<<gridSize, blockSize, 0, stream>>>(
         H_values, H_rowPtr, H_colInd, weights, G_dense, nMeas, nStates);
     
     cudaError_t kernelErr = cudaGetLastError();
@@ -539,11 +571,16 @@ bool computeGainMatrixDirect(cusparseHandle_t handle,
     
     // Step 1: Compute dense G on GPU
     Real* G_dense = nullptr;
-    bool success = computeGainMatrixDirectGPU(H_values, H_rowPtr, H_colInd, weights,
+    // Updated to pass handle so it can extract stream
+    bool success = computeGainMatrixDirectGPU(handle, H_values, H_rowPtr, H_colInd, weights,
                                              G_dense, nMeas, nStates);
     if (!success) {
         return false;
     }
+    
+    // Get stream
+    cudaStream_t stream = 0;
+    cusparseGetStream(handle, &stream);
     
     // Step 2: Count non-zeros per row (first pass)
     Index* rowCounts = nullptr;
@@ -558,11 +595,13 @@ bool computeGainMatrixDirect(cusparseHandle_t handle,
     const Real threshold = 1e-12;
     
     // Count non-zeros per row
-    countNonZerosKernel<<<gridSize, blockSize>>>(G_dense, rowCounts, nStates, threshold);
+    countNonZerosKernel<<<gridSize, blockSize, 0, stream>>>(G_dense, rowCounts, nStates, threshold);
     
     // Step 3: Build row pointer (exclusive scan on host for simplicity)
+    // TODO: Use thrust::exclusive_scan for GPU-only execution
     std::vector<Index> rowCounts_host(nStates);
-    cudaMemcpy(rowCounts_host.data(), rowCounts, nStates * sizeof(Index), cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(rowCounts_host.data(), rowCounts, nStates * sizeof(Index), cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream); // Must wait for counts
     cudaFree(rowCounts);
     
     std::vector<Index> G_rowPtr_host(nStates + 1);
@@ -573,37 +612,44 @@ bool computeGainMatrixDirect(cusparseHandle_t handle,
     G_nnz = G_rowPtr_host[nStates];
     
     // Step 4: Allocate row pointer and output arrays
-    err = cudaMalloc(&G_rowPtr, (nStates + 1) * sizeof(Index));
-    if (err != cudaSuccess) {
-        cudaFree(G_dense);
-        return false;
+    // If reusing, we assume G_rowPtr is already allocated (check nullness to be safe)
+    bool reuseBuffers = (G_values != nullptr && G_colInd != nullptr && G_rowPtr != nullptr);
+    
+    if (!reuseBuffers) {
+        err = cudaMalloc(&G_rowPtr, (nStates + 1) * sizeof(Index));
+        if (err != cudaSuccess) {
+            cudaFree(G_dense);
+            return false;
+        }
     }
     
     // Copy row pointer to device
-    cudaMemcpy(G_rowPtr, G_rowPtr_host.data(), (nStates + 1) * sizeof(Index), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(G_rowPtr, G_rowPtr_host.data(), (nStates + 1) * sizeof(Index), cudaMemcpyHostToDevice, stream);
     
     // Step 5: Allocate output arrays and extract non-zeros
     if (G_nnz > 0) {
-        err = cudaMalloc(&G_values, G_nnz * sizeof(Real));
-        if (err != cudaSuccess) {
-            cudaFree(G_dense);
-            cudaFree(G_rowPtr);
-            return false;
-        }
-        
-        err = cudaMalloc(&G_colInd, G_nnz * sizeof(Index));
-        if (err != cudaSuccess) {
-            cudaFree(G_dense);
-            cudaFree(G_rowPtr);
-            cudaFree(G_values);
-            return false;
+        if (!reuseBuffers) {
+            err = cudaMalloc(&G_values, G_nnz * sizeof(Real));
+            if (err != cudaSuccess) {
+                cudaFree(G_dense);
+                if (!reuseBuffers) cudaFree(G_rowPtr);
+                return false;
+            }
+            
+            err = cudaMalloc(&G_colInd, G_nnz * sizeof(Index));
+            if (err != cudaSuccess) {
+                cudaFree(G_dense);
+                if (!reuseBuffers) cudaFree(G_rowPtr);
+                cudaFree(G_values);
+                return false;
+            }
         }
         
         // Extract non-zeros from dense matrix
-        extractNonZerosKernel<<<gridSize, blockSize>>>(
+        extractNonZerosKernel<<<gridSize, blockSize, 0, stream>>>(
             G_dense, G_values, G_colInd, G_rowPtr, nStates, threshold);
     } else {
-        cudaMemset(G_rowPtr, 0, (nStates + 1) * sizeof(Index));
+        cudaMemsetAsync(G_rowPtr, 0, (nStates + 1) * sizeof(Index), stream);
     }
     
     cudaFree(G_dense);
