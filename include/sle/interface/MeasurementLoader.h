@@ -35,6 +35,16 @@ public:
     static void addPseudoMeasurements(model::TelemetryData& telemetry,
                                      const model::NetworkModel& network,
                                      const std::vector<Real>& loadForecasts);
+    
+    // Load devices from file (creates devices and links measurements)
+    static void loadDevices(const std::string& filepath, 
+                           model::TelemetryData& telemetry,
+                           const model::NetworkModel& network);
+    
+    // Load devices from CSV
+    static void loadDevicesFromCSV(const std::string& filepath,
+                                  model::TelemetryData& telemetry,
+                                  const model::NetworkModel& network);
 };
 
 } // namespace interface

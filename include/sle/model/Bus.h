@@ -9,6 +9,17 @@
 
 #include <sle/Types.h>
 #include <string>
+#include <vector>
+#include <memory>
+
+// Forward declarations
+namespace sle {
+namespace model {
+    class TelemetryData;
+    class MeasurementDevice;
+    class MeasurementModel;
+}
+}
 
 namespace sle {
 namespace model {
@@ -62,6 +73,29 @@ public:
     Real getQInjection() const { return qInjection_; }        // Q injection in p.u.
     Real getPInjectionMW() const { return pInjectionMW_; }    // P injection in MW
     Real getQInjectionMVAR() const { return qInjectionMVAR_; } // Q injection in MVAR
+    
+    // Get telemetry from associated devices (requires TelemetryData reference)
+    // Returns all devices (voltmeters) associated with this bus
+    std::vector<const MeasurementDevice*> getAssociatedDevices(const TelemetryData& telemetry) const;
+    
+    // Get all measurements from devices associated with this bus
+    // NOTE: Always queries latest values from telemetry - reflects real-time updates
+    std::vector<const MeasurementModel*> getMeasurementsFromDevices(const TelemetryData& telemetry) const;
+    
+    // Get specific measurement type from associated devices
+    // NOTE: Always queries latest values from telemetry - reflects real-time updates
+    std::vector<const MeasurementModel*> getMeasurementsFromDevices(const TelemetryData& telemetry, MeasurementType type) const;
+    
+    // Convenience methods: Get current measurement values directly
+    // These methods query telemetry each time, so they always return the latest values
+    
+    // Get current voltage magnitude measurement (from voltmeter)
+    // Returns measurement value if found, NaN if no measurement available
+    Real getCurrentVoltageMeasurement(const TelemetryData& telemetry) const;
+    
+    // Get current power injection measurements (P and Q)
+    // Returns true if measurements found, false otherwise
+    bool getCurrentPowerInjections(const TelemetryData& telemetry, Real& pInjection, Real& qInjection) const;
     
 private:
     // Internal setters (used by NetworkModel)

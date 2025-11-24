@@ -45,6 +45,14 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
     const auto& measurements = telemetry.getMeasurements();
     size_t nMeas = measurements.size();
     
+    // OPTIMIZATION: Pre-compute base weights and stdDevs once (loop invariants)
+    std::vector<Real> baseWeights(nMeas);
+    std::vector<Real> stdDevs(nMeas);
+    for (size_t i = 0; i < nMeas; ++i) {
+        baseWeights[i] = measurements[i]->getWeight();
+        stdDevs[i] = measurements[i]->getStdDev();
+    }
+    
     // Robust scaling factors (0.0 to 1.0)
     // Initialize to 1.0 (standard WLS)
     std::vector<Real> robustScaling(nMeas, 1.0);
@@ -60,14 +68,19 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
     
     // IRLS iterations
     for (Index irlsIter = 0; irlsIter < config_.maxIterations; ++irlsIter) {
-        // Calculate absolute weights for Solver
+        // OPTIMIZATION: Calculate absolute weights for Solver using pre-computed base weights
         std::vector<Real> solverWeights(nMeas);
+        #ifdef USE_OPENMP
+        #pragma omp parallel for
+        #endif
         for (size_t i = 0; i < nMeas; ++i) {
-            solverWeights[i] = measurements[i]->getWeight() * robustScaling[i];
+            solverWeights[i] = baseWeights[i] * robustScaling[i];
         }
         
         // Solve weighted least squares with override weights
-        SolverResult solverResult = solver_->solve(state, network, telemetry, solverWeights);
+        // Reuse structure for subsequent iterations
+        bool reuseStructure = (irlsIter > 0);
+        SolverResult solverResult = solver_->solve(state, network, telemetry, solverWeights, reuseStructure);
         
         if (!solverResult.converged && irlsIter == 0) {
             // If first iteration (standard WLS) fails, likely bad data or observability issue
@@ -75,16 +88,12 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
             break;
         }
         
-        // CUDA-EXCLUSIVE: Compute residuals
-        std::vector<Real> hx;
-        measFuncs.evaluate(state, network, telemetry, hx);
-        
+        // CUDA-EXCLUSIVE: Compute residuals using Solver's optimized method
+        // This reuses the GPU buffers (d_z, d_hx) from the solver
         std::vector<Real> residuals(nMeas);
-        std::vector<Real> stdDevs(nMeas);
-        for (size_t i = 0; i < nMeas && i < hx.size(); ++i) {
-            residuals[i] = measurements[i]->getValue() - hx[i];
-            stdDevs[i] = measurements[i]->getStdDev();
-        }
+        solver_->getLastResiduals(residuals); // Efficiently copies r = z - h(x) from GPU
+        
+        // OPTIMIZATION: stdDevs already pre-computed outside loop
         
         // Update robust weights (scaling factors)
         std::vector<Real> newRobustScaling(nMeas);
@@ -93,6 +102,10 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
         // Check convergence (weights stabilized)
         if (irlsIter > 0) {
             Real weightChange = 0.0;
+            // OPTIMIZATION: OpenMP for weight difference reduction
+            #ifdef USE_OPENMP
+            #pragma omp parallel for reduction(+:weightChange)
+            #endif
             for (size_t i = 0; i < nMeas; ++i) {
                 weightChange += std::abs(newRobustScaling[i] - robustScaling[i]);
             }
@@ -127,7 +140,12 @@ void RobustEstimator::computeRobustWeights(const std::vector<Real>& residuals,
                                           std::vector<Real>& weights) const {
     auto weightFunc = getWeightFunction();
     
-    for (size_t i = 0; i < residuals.size() && i < stdDevs.size(); ++i) {
+    // OPTIMIZATION: OpenMP parallelization for independent weight calculations
+    size_t n = residuals.size();
+    #ifdef USE_OPENMP
+    #pragma omp parallel for
+    #endif
+    for (size_t i = 0; i < n; ++i) {
         Real normalizedResidual = std::abs(residuals[i]) / stdDevs[i];
         weights[i] = weightFunc(normalizedResidual);
     }

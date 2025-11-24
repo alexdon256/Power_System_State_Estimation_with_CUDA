@@ -10,13 +10,8 @@
 #define SLE_CUDA_CUDAPOWERFLOW_H
 
 #include <sle/Types.h>
-#include <vector>
-
-#ifdef USE_CUDA
 #include <cuda_runtime.h>
-#else
-using cudaStream_t = void*;
-#endif
+#include <vector>
 
 namespace sle {
 namespace cuda {

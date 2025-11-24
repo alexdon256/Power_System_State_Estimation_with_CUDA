@@ -9,13 +9,8 @@
 
 #include <sle/Types.h>
 #include <sle/math/SparseMatrix.h>
-#include <vector>
-
-#ifdef USE_CUDA
 #include <cuda_runtime.h>
-#else
-using cudaStream_t = void*;
-#endif
+#include <vector>
 
 // Forward declaration
 namespace sle {

@@ -40,11 +40,13 @@ public:
     
     // Chi-square test for bad data detection
     // measFuncs: Optional pointer to reuse existing MeasurementFunctions (avoids reallocation)
+    // residualsOverride: Optional pointer to reuse existing residuals (avoids re-calculation)
     BadDataResult detectBadDataChiSquare(
         const model::TelemetryData& telemetry,
         const model::StateVector& state,
         const model::NetworkModel& network,
-        math::MeasurementFunctions* measFuncs = nullptr);
+        math::MeasurementFunctions* measFuncs = nullptr,
+        const std::vector<Real>* residualsOverride = nullptr);
     
     // Largest normalized residual test
     // measFuncs: Optional pointer to reuse existing MeasurementFunctions (avoids reallocation)
@@ -57,11 +59,13 @@ public:
     
     // Combined detection method
     // measFuncs: Optional pointer to reuse existing MeasurementFunctions (avoids reallocation)
+    // residualsOverride: Optional pointer to reuse existing residuals (avoids re-calculation)
     BadDataResult detectBadData(
         const model::TelemetryData& telemetry,
         const model::StateVector& state,
         const model::NetworkModel& network,
-        math::MeasurementFunctions* measFuncs = nullptr);
+        math::MeasurementFunctions* measFuncs = nullptr,
+        const std::vector<Real>* residualsOverride = nullptr);
     
     // Remove bad measurements
     void removeBadMeasurements(model::TelemetryData& telemetry,
@@ -84,7 +88,8 @@ private:
         const model::TelemetryData& telemetry,
         const model::StateVector& state,
         const model::NetworkModel& network,
-        math::MeasurementFunctions* measFuncs);
+        math::MeasurementFunctions* measFuncs,
+        const std::vector<Real>* residualsOverride = nullptr);
     
     // Compute chi-square statistic
     Real computeChiSquare(const std::vector<Real>& residuals,

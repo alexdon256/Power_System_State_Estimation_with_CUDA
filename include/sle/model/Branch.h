@@ -8,7 +8,17 @@
 #define SLE_MODEL_BRANCH_H
 
 #include <sle/Types.h>
+#include <vector>
 #include <memory>
+
+// Forward declarations
+namespace sle {
+namespace model {
+    class TelemetryData;
+    class MeasurementDevice;
+    class MeasurementModel;
+}
+}
 
 namespace sle {
 namespace model {
@@ -54,6 +64,34 @@ public:
     Real getIAmps() const { return iAmps_; }          // Current in Amperes
     Real getIPU() const { return iPU_; }             // Current in per-unit
     
+    // Status management
+    void setStatus(bool closed) { status_ = closed; }
+    bool getStatus() const { return status_; }
+    bool isOn() const { return status_; }
+    
+    // Get telemetry from associated devices (requires TelemetryData reference)
+    // Returns all devices (multimeters) associated with this branch
+    std::vector<const MeasurementDevice*> getAssociatedDevices(const TelemetryData& telemetry) const;
+    
+    // Get all measurements from devices associated with this branch
+    // NOTE: Always queries latest values from telemetry - reflects real-time updates
+    std::vector<const MeasurementModel*> getMeasurementsFromDevices(const TelemetryData& telemetry) const;
+    
+    // Get specific measurement type from associated devices
+    // NOTE: Always queries latest values from telemetry - reflects real-time updates
+    std::vector<const MeasurementModel*> getMeasurementsFromDevices(const TelemetryData& telemetry, MeasurementType type) const;
+    
+    // Convenience methods: Get current measurement values directly
+    // These methods query telemetry each time, so they always return the latest values
+    
+    // Get current power flow measurements (P and Q)
+    // Returns true if measurements found, false otherwise
+    bool getCurrentPowerFlow(const TelemetryData& telemetry, Real& pFlow, Real& qFlow) const;
+    
+    // Get current current magnitude measurement
+    // Returns measurement value if found, NaN if no measurement available
+    Real getCurrentCurrentMeasurement(const TelemetryData& telemetry) const;
+    
 private:
     // Internal setters (used by NetworkModel)
     friend class NetworkModel;
@@ -69,6 +107,8 @@ private:
     
     Real tapRatio_;    // Transformer tap ratio (1.0 for lines)
     Real phaseShift_;  // Phase shift angle (radians)
+    
+    bool status_;      // true = Closed (In Service), false = Open (Out of Service)
     
     // Computed values (set by Solver::storeComputedValues)
     Real pFlow_;       // P flow in p.u.

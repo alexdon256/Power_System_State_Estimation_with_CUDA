@@ -22,36 +22,47 @@ BadDataResult BadDataDetector::detectBadDataChiSquare(
     const model::TelemetryData& telemetry,
     const model::StateVector& state,
     const model::NetworkModel& network,
-    math::MeasurementFunctions* measFuncs) {
+    math::MeasurementFunctions* measFuncs,
+    const std::vector<Real>* residualsOverride) {
     
     BadDataResult result;
     result.hasBadData = false;
     
-    // Evaluate measurement functions
-    // Reuse measFuncs if provided, otherwise create local
-    std::unique_ptr<math::MeasurementFunctions> localMeasFuncs;
-    math::MeasurementFunctions* pMeasFuncs = measFuncs;
+    std::vector<Real> residuals;
     
-    if (!pMeasFuncs) {
-        localMeasFuncs = std::make_unique<math::MeasurementFunctions>();
-        pMeasFuncs = localMeasFuncs.get();
+    if (residualsOverride && !residualsOverride->empty()) {
+        // Use provided residuals
+        residuals = *residualsOverride;
+    } else {
+    // Evaluate measurement functions
+        // Reuse measFuncs if provided, otherwise create local
+        std::unique_ptr<math::MeasurementFunctions> localMeasFuncs;
+        math::MeasurementFunctions* pMeasFuncs = measFuncs;
+        
+        if (!pMeasFuncs) {
+            localMeasFuncs = std::make_unique<math::MeasurementFunctions>();
+            pMeasFuncs = localMeasFuncs.get();
+        }
+        
+    std::vector<Real> hx;
+        pMeasFuncs->evaluate(state, network, telemetry, hx);
+        
+        const auto& measurements = telemetry.getMeasurements();
+        residuals.reserve(measurements.size());
+        for (size_t i = 0; i < measurements.size() && i < hx.size(); ++i) {
+            residuals.push_back(measurements[i]->getValue() - hx[i]);
+        }
     }
     
-    std::vector<Real> hx;
-    pMeasFuncs->evaluate(state, network, telemetry, hx);
-    
-    // Compute residuals, weights, and normalized residuals in a single pass
-    std::vector<Real> residuals;
+    // Compute weights and normalized residuals in a single pass
     std::vector<Real> weights;
     std::vector<Real> normalizedResiduals;
     const auto& measurements = telemetry.getMeasurements();
     
-    for (size_t i = 0; i < measurements.size() && i < hx.size(); ++i) {
-        Real residual = measurements[i]->getValue() - hx[i];
-        residuals.push_back(residual);
+    for (size_t i = 0; i < measurements.size() && i < residuals.size(); ++i) {
         weights.push_back(measurements[i]->getWeight());
         Real stdDev = measurements[i]->getStdDev();
-        normalizedResiduals.push_back(stdDev > 0 ? residual / stdDev : 0.0);
+        normalizedResiduals.push_back(stdDev > 0 ? residuals[i] / stdDev : 0.0);
     }
     
     // Compute chi-square statistic
@@ -129,13 +140,15 @@ BadDataResult BadDataDetector::detectBadData(
     const model::TelemetryData& telemetry,
     const model::StateVector& state,
     const model::NetworkModel& network,
-    math::MeasurementFunctions* measFuncs) {
+    math::MeasurementFunctions* measFuncs,
+    const std::vector<Real>* residualsOverride) {
     
     // Use chi-square test first, then LNR for identification
-    BadDataResult result = detectBadDataChiSquare(telemetry, state, network, measFuncs);
+    BadDataResult result = detectBadDataChiSquare(telemetry, state, network, measFuncs, residualsOverride);
     
     if (result.hasBadData) {
         // Refine using LNR without re-evaluating measurement functions
+        // Note: detectBadDataLNR calls computeNormalizedResiduals which now handles override
         BadDataResult lnrResult = detectBadDataLNR(
             telemetry, state, network, &result.normalizedResiduals, measFuncs);
         if (lnrResult.hasBadData) {
@@ -198,27 +211,38 @@ std::vector<Real> BadDataDetector::computeNormalizedResiduals(
     const model::TelemetryData& telemetry,
     const model::StateVector& state,
     const model::NetworkModel& network,
-    math::MeasurementFunctions* measFuncs) {
+    math::MeasurementFunctions* measFuncs,
+    const std::vector<Real>* residualsOverride) {
     
-    // Reuse measFuncs if provided
-    std::unique_ptr<math::MeasurementFunctions> localMeasFuncs;
-    math::MeasurementFunctions* pMeasFuncs = measFuncs;
-    
-    if (!pMeasFuncs) {
-        localMeasFuncs = std::make_unique<math::MeasurementFunctions>();
-        pMeasFuncs = localMeasFuncs.get();
-    }
-    
-    std::vector<Real> hx;
-    pMeasFuncs->evaluate(state, network, telemetry, hx);
-    
-    std::vector<Real> normalizedResiduals;
+    std::vector<Real> residuals;
     const auto& measurements = telemetry.getMeasurements();
     
-    for (size_t i = 0; i < measurements.size() && i < hx.size(); ++i) {
-        Real residual = measurements[i]->getValue() - hx[i];
+    if (residualsOverride && !residualsOverride->empty()) {
+        residuals = *residualsOverride;
+    } else {
+        // Reuse measFuncs if provided
+        std::unique_ptr<math::MeasurementFunctions> localMeasFuncs;
+        math::MeasurementFunctions* pMeasFuncs = measFuncs;
+        
+        if (!pMeasFuncs) {
+            localMeasFuncs = std::make_unique<math::MeasurementFunctions>();
+            pMeasFuncs = localMeasFuncs.get();
+        }
+        
+    std::vector<Real> hx;
+        pMeasFuncs->evaluate(state, network, telemetry, hx);
+        
+        residuals.reserve(measurements.size());
+        for (size_t i = 0; i < measurements.size() && i < hx.size(); ++i) {
+            residuals.push_back(measurements[i]->getValue() - hx[i]);
+        }
+    }
+    
+    std::vector<Real> normalizedResiduals;
+    
+    for (size_t i = 0; i < measurements.size() && i < residuals.size(); ++i) {
         Real stdDev = measurements[i]->getStdDev();
-        normalizedResiduals.push_back(residual / stdDev);
+        normalizedResiduals.push_back(stdDev > 0 ? residuals[i] / stdDev : 0.0);
     }
     
     return normalizedResiduals;

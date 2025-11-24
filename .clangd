@@ -1,0 +1,21 @@
+CompileFlags:
+  Add:
+    - -I"C:/Users/oleks/Documents/SLE_CUDA/Power_System_State_Estimation/include"
+    - -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/include"
+    - -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.0/include"
+    - -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.1/include"
+    - -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2/include"
+    - -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/include"
+    - -xc++
+    - -std=c++17
+    - -D__CUDACC__
+  Remove:
+    - -W*
+    - -w
+
+Index:
+  Background: Build
+
+Diagnostics:
+  UnusedIncludes: None
+  MissingIncludes: None

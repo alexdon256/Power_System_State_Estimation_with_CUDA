@@ -1,49 +1,34 @@
-# Real-Time State Estimation Guide
+# Real-Time and Dynamic Updates
+
+Complete guide to real-time operation and dynamic network updates.
 
 ## Overview
 
-The State Estimation system supports real-time operation where network models and measurements can be updated on the fly without requiring full system reload.
+The State Estimation system supports real-time operation where network models and measurements can be updated on the fly without requiring full system reload. All Bus and Branch properties can be updated dynamically using their comprehensive setter methods.
 
 ## Real-Time Architecture
 
-The system is optimized for high-frequency updates using a zero-copy topology reuse architecture.
-
 ### Zero-Copy Topology Reuse
 
-For systems where the topology (switches, breakers) changes less frequently than analog measurements (voltages, flows):
+For systems where topology (switches, breakers) changes less frequently than analog measurements (voltages, flows):
 
-1.  **Static Topology**: The Jacobian structure and network graph are built once and persisted on the GPU.
-2.  **Dynamic Analogs**: Only measurement values ($z$) and state vector ($x$) are transferred per cycle.
-3.  **Zero-Copy**: Skip re-uploading bus/branch data and re-analyzing matrix structure.
+1. **Static Topology**: Jacobian structure and network graph built once and persisted on GPU
+2. **Dynamic Analogs**: Only measurement values ($z$) and state vector ($x$) transferred per cycle
+3. **Zero-Copy**: Skip re-uploading bus/branch data and re-analyzing matrix structure
 
-This reduces PCIe bandwidth usage by over 90% and eliminates symbolic factorization overhead.
+This reduces PCIe bandwidth by 90%+ and eliminates symbolic factorization overhead.
 
 ### Asynchronous Pipeline
 
 The estimation pipeline runs asynchronously on CUDA streams:
-1.  Host queues data upload (non-blocking).
-2.  GPU computes measurement functions $h(x)$ and Jacobian $H(x)$.
-3.  GPU solves linear system $G \Delta x = H^T W r$.
-4.  Host synchronizes only when results are needed.
+1. Host queues data upload (non-blocking)
+2. GPU computes measurement functions $h(x)$ and Jacobian $H(x)$
+3. GPU solves linear system $G \Delta x = H^T W r$
+4. Host synchronizes only when results are needed
 
-### TelemetryProcessor
+## Real-Time Telemetry Updates
 
-The `TelemetryProcessor` handles asynchronous measurement updates:
-
-- Update queue
-- Background processing thread
-- Automatic timestamp tracking
-- Batch update support
-
-### StateEstimator Updates
-
-The `StateEstimator` supports:
-
-- Incremental estimation (faster convergence using previous state)
-- Model update detection
-- Telemetry update detection
-
-## Usage Example
+### Basic Usage
 
 ```cpp
 #include <sle/interface/StateEstimator.h>
@@ -58,7 +43,29 @@ estimator.setTelemetryData(telemetry);
 auto& processor = estimator.getTelemetryProcessor();
 processor.startRealTimeProcessing();
 
-// In your real-time loop
+// Update measurements on the fly
+sle::interface::TelemetryUpdate update;
+update.deviceId = "VM-001";
+update.type = sle::MeasurementType::V_MAGNITUDE;
+update.value = 1.05;
+update.stdDev = 0.01;
+update.busId = 5;
+update.timestamp = getCurrentTimestamp();
+processor.updateMeasurement(update);
+
+// Bus immediately sees updated value
+const Bus* bus = network->getBus(5);
+Real currentVoltage = bus->getCurrentVoltageMeasurement(telemetry);
+
+// Run incremental estimation (faster)
+auto result = estimator.estimateIncremental();
+```
+
+**Important**: All query methods query telemetry each time they're called, so they **always return the latest values**. Updates are immediately visible without caching.
+
+### Real-Time Loop Example
+
+```cpp
 while (running) {
     // Receive telemetry updates from SCADA/PMU
     sle::interface::TelemetryUpdate update;
@@ -79,27 +86,133 @@ while (running) {
     }
 }
 
-// Stop processing
 processor.stopRealTimeProcessing();
 ```
 
-## Network Model Updates
+## Dynamic Network Updates
+
+### Adding Components
 
 ```cpp
-// Update network model in real-time
-auto updatedNetwork = loadUpdatedNetwork();
-estimator.updateNetworkModel(updatedNetwork);
+// Add a new bus
+Bus* newBus = network->addBus(100, "New Bus");
+newBus->setBaseKV(230.0);
+newBus->setType(BusType::PQ);
+newBus->setLoad(50.0, 20.0);  // MW, MVAR
 
-// Update specific bus
-network->getBus(busId)->setLoad(newPLoad, newQLoad);
-network->invalidateAdmittanceMatrix();  // Mark for rebuild
-estimator.markModelUpdated();
-
-// Update branch
-network->getBranch(branchId)->setImpedance(newR, newX);
-network->invalidateAdmittanceMatrix();
-estimator.markModelUpdated();
+// Add a new branch
+Branch* newBranch = network->addBranch(200, 1, 100);
+newBranch->setImpedance(0.01, 0.05);  // R, X in p.u.
+newBranch->setRating(100.0);  // MVA rating
 ```
+
+### Removing Components
+
+```cpp
+// Remove a bus (automatically invalidates caches)
+network->removeBus(100);
+
+// Remove a branch (automatically invalidates caches)
+network->removeBranch(200);
+```
+
+### Updating Bus Properties
+
+```cpp
+Bus* bus = network->getBus(1);
+if (bus) {
+    bus->setType(BusType::PQ);
+    bus->setBaseKV(230.0);
+    bus->setVoltage(1.05, 0.0);  // magnitude (p.u.), angle (radians)
+    bus->setLoad(50.0, 20.0);  // P_load (MW), Q_load (MVAR)
+    bus->setGeneration(100.0, 30.0);  // P_gen (MW), Q_gen (MVAR)
+    bus->setShunt(0.01, 0.05);  // G_shunt (p.u.), B_shunt (p.u.)
+    bus->setVoltageLimits(0.95, 1.05);  // V_min (p.u.), V_max (p.u.)
+}
+```
+
+### Updating Branch Properties
+
+```cpp
+Branch* branch = network->getBranch(1);
+if (branch) {
+    branch->setImpedance(0.01, 0.05);  // R (p.u.), X (p.u.)
+    branch->setCharging(0.001);  // B (p.u.)
+    branch->setRating(100.0);  // MVA rating
+    branch->setTapRatio(1.05);  // Tap ratio
+    branch->setPhaseShift(0.0);  // Phase shift (radians)
+}
+```
+
+### Searching Buses by Name
+
+```cpp
+// O(1) average-case lookup
+Bus* bus = network->getBusByName("Main Substation");
+if (bus) {
+    bus->setVoltage(1.05, 0.0);
+}
+```
+
+## Measurement Management
+
+### Adding Measurements
+
+```cpp
+// Via TelemetryData directly
+auto measurement = std::make_unique<MeasurementModel>(
+    MeasurementType::V_MAGNITUDE, 1.05, 0.01, "PMU_001");
+measurement->setLocation(1);
+telemetry->addMeasurement(std::move(measurement));
+
+// Via TelemetryProcessor (queued)
+TelemetryUpdate update;
+update.deviceId = "PMU_001";
+update.type = MeasurementType::V_MAGNITUDE;
+update.value = 1.05;
+update.stdDev = 0.01;
+update.busId = 1;
+processor.addMeasurement(update);
+
+// Batch updates
+std::vector<TelemetryUpdate> updates = {...};
+processor.updateMeasurements(updates);
+```
+
+### Updating Measurements
+
+```cpp
+// Update existing measurement by device ID
+TelemetryUpdate update;
+update.deviceId = "PMU_001";  // Must match existing device ID
+update.value = 1.06;  // New value
+update.stdDev = 0.01;
+processor.updateMeasurement(update);
+```
+
+### Removing Measurements
+
+```cpp
+// Via TelemetryProcessor
+processor.removeMeasurement("PMU_001");
+
+// Via TelemetryData directly
+bool removed = telemetry->removeMeasurement("PMU_001");
+```
+
+## Cache Invalidation
+
+All dynamic updates automatically invalidate caches:
+
+- **Network changes** (`addBus`, `removeBus`, `addBranch`, `removeBranch`):
+  - Invalidates adjacency lists
+  - Invalidates GPU device data
+  - Invalidates cached power injection/flow vectors
+
+- **Measurement changes**:
+  - Jacobian matrix structure needs rebuilding
+  - Measurement vector needs updating
+  - State estimator handles this automatically
 
 ## Performance Considerations
 
@@ -107,50 +220,7 @@ estimator.markModelUpdated();
 2. **Update Frequency**: Balance between update rate and estimation accuracy
 3. **GPU Acceleration**: CUDA acceleration is essential for real-time performance
 4. **Batch Updates**: Group multiple updates together when possible
-
-## Convenience Methods
-
-The `StateEstimator` provides convenience methods for easier real-time setup:
-
-```cpp
-// Quick configuration for real-time operation
-estimator.configureForRealTime();  // Uses defaults: tolerance=1e-5, maxIter=15, GPU=true
-
-// Quick setup from files
-if (estimator.loadFromFiles("network.dat", "measurements.csv")) {
-    // Ready to estimate
-}
-
-// Check if ready
-if (estimator.isReady()) {
-    auto result = estimator.estimate();
-}
-
-// Quick access to estimated voltages
-Real v = estimator.getVoltageMagnitude(busId);
-Real theta = estimator.getVoltageAngle(busId);
-```
-
-## Comparison Reports
-
-Compare measured vs estimated values to validate estimation and detect bad data:
-
-```cpp
-#include <sle/io/ComparisonReport.h>
-
-// After estimation, compare measured vs estimated
-auto comparisons = sle::io::ComparisonReport::compare(
-    *telemetry, *result.state, *network);
-
-// Analyze results
-int badCount = 0;
-for (const auto& comp : comparisons) {
-    if (comp.isBad) badCount++;  // Normalized residual > 3.0
-}
-
-// Write report to file
-sle::io::ComparisonReport::writeReport("comparison_report.txt", comparisons);
-```
+5. **Topology Reuse**: Use `reuseStructure=true` flag when topology hasn't changed
 
 ## Best Practices
 
@@ -159,6 +229,54 @@ sle::io::ComparisonReport::writeReport("comparison_report.txt", comparisons);
 3. Process update queue before estimation
 4. Monitor estimation convergence in real-time
 5. Handle bad data detection in real-time loop
-6. Use comparison reports to validate estimation accuracy
-7. Use convenience methods (`configureForRealTime()`, `loadFromFiles()`) for faster setup
+6. Use convenience methods (`configureForRealTime()`, `loadFromFiles()`) for faster setup
+7. Invalidate admittance matrix after network changes: `network->invalidateAdmittanceMatrix()`
+8. Mark model updated: `estimator.markModelUpdated()` after network changes
 
+## Complete Example
+
+```cpp
+#include <sle/interface/StateEstimator.h>
+
+StateEstimator estimator;
+estimator.setNetwork(network);
+estimator.setTelemetryData(telemetry);
+estimator.configureForRealTime();
+
+auto& processor = estimator.getTelemetryProcessor();
+processor.startRealTimeProcessing();
+
+while (running) {
+    // 1. Add new bus dynamically
+    Bus* newBus = network->addBus(999, "Dynamic Bus");
+    newBus->setType(BusType::PQ);
+    newBus->setBaseKV(230.0);
+    newBus->setLoad(10.0, 5.0);
+    
+    // 2. Add branch to new bus
+    Branch* newBranch = network->addBranch(888, 1, 999);
+    newBranch->setImpedance(0.02, 0.1);
+    newBranch->setRating(50.0);
+    
+    // 3. Update existing bus
+    Bus* bus = network->getBus(1);
+    if (bus) {
+        bus->setLoad(60.0, 25.0);
+        bus->setGeneration(120.0, 40.0);
+    }
+    
+    // 4. Update measurement
+    TelemetryUpdate update;
+    update.deviceId = "PMU_999";
+    update.type = MeasurementType::V_MAGNITUDE;
+    update.value = 1.02;
+    update.busId = 999;
+    processor.updateMeasurement(update);
+    
+    // 5. Process updates and re-estimate
+    network->invalidateAdmittanceMatrix();
+    estimator.markModelUpdated();
+    processor.processUpdateQueue();
+    auto result = estimator.estimateIncremental();
+}
+```

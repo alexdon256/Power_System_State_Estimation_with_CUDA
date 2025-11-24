@@ -14,11 +14,16 @@ namespace math {
 
 SparseMatrix::SparseMatrix() 
     : d_values_(nullptr), d_rowPtr_(nullptr), d_colInd_(nullptr),
-      nRows_(0), nCols_(0), nnz_(0) {
+      nRows_(0), nCols_(0), nnz_(0)
+#if CUSPARSE_VERSION >= 11000
+      , cachedSpMatDescr_(nullptr), cachedSpMVBufferSize_(0), cachedSpMVBuffer_(nullptr)
+#endif
+{
 }
 
 SparseMatrix::~SparseMatrix() {
     clear();
+    freeCachedDescriptors();
 }
 
 void SparseMatrix::allocateDeviceMemory() {
@@ -105,7 +110,8 @@ void SparseMatrix::buildFromCSR(const std::vector<Real>& values,
     }
 }
 
-void SparseMatrix::multiplyVector(const Real* x, Real* y, cusparseHandle_t handle) const {
+void SparseMatrix::multiplyVector(const Real* x, Real* y, cusparseHandle_t handle,
+                                 void* dBuffer, size_t* bufferSize) const {
     if (nnz_ == 0 || nRows_ == 0) {
         return;
     }
@@ -114,32 +120,57 @@ void SparseMatrix::multiplyVector(const Real* x, Real* y, cusparseHandle_t handl
     const Real beta = 0.0;
     
 #if CUSPARSE_VERSION >= 11000
-    cusparseSpMatDescr_t mat;
+    // OPTIMIZATION: Cache matrix descriptor (reused across calls)
+    if (!cachedSpMatDescr_) {
+        cusparseCreateCsr(&cachedSpMatDescr_,
+                         nRows_, nCols_, nnz_,
+                         d_rowPtr_, d_colInd_, d_values_,
+                         CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                         CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+    }
+    
     cusparseDnVecDescr_t vecX, vecY;
-    cusparseCreateCsr(&mat,
-                      nRows_, nCols_, nnz_,
-                      d_rowPtr_, d_colInd_, d_values_,
-                      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
     cusparseCreateDnVec(&vecX, nCols_, const_cast<Real*>(x), CUDA_R_64F);
     cusparseCreateDnVec(&vecY, nRows_, y, CUDA_R_64F);
     
-    size_t bufferSize = 0;
-    void* dBuffer = nullptr;
+    size_t requiredBufferSize = 0;
     cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                            &alpha, mat, vecX, &beta, vecY,
-                            CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-    if (bufferSize > 0) {
-        cudaMalloc(&dBuffer, bufferSize);
+                            &alpha, cachedSpMatDescr_, vecX, &beta, vecY,
+                            CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &requiredBufferSize);
+    
+    // Use provided buffer, cached buffer, or allocate temporary
+    void* workBuffer = nullptr;
+    if (dBuffer && bufferSize && *bufferSize >= requiredBufferSize) {
+        workBuffer = dBuffer;  // Use provided pooled buffer
+    } else if (cachedSpMVBufferSize_ >= requiredBufferSize) {
+        workBuffer = cachedSpMVBuffer_;  // Use cached buffer
+    } else if (requiredBufferSize > 0) {
+        // Allocate temporary (or update cache if no provided buffer)
+        if (!dBuffer) {
+            ensureSpMVBuffer(requiredBufferSize);
+            workBuffer = cachedSpMVBuffer_;
+        } else {
+            // Provided buffer too small, allocate temporary
+            cudaMalloc(&workBuffer, requiredBufferSize);
+        }
     }
+    
     cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                 &alpha, mat, vecX, &beta, vecY,
-                 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer);
-    if (dBuffer) cudaFree(dBuffer);
+                 &alpha, cachedSpMatDescr_, vecX, &beta, vecY,
+                 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, workBuffer);
+    
+    // Free temporary buffer if we allocated one (not cached, not provided)
+    if (workBuffer && workBuffer != dBuffer && workBuffer != cachedSpMVBuffer_) {
+        cudaFree(workBuffer);
+    }
+    
+    // Update buffer size hint if provided
+    if (bufferSize) {
+        *bufferSize = requiredBufferSize;
+    }
     
     cusparseDestroyDnVec(vecX);
     cusparseDestroyDnVec(vecY);
-    cusparseDestroySpMat(mat);
 #else
     cusparseMatDescr_t descr;
     cusparseCreateMatDescr(&descr);
@@ -156,7 +187,8 @@ void SparseMatrix::multiplyVector(const Real* x, Real* y, cusparseHandle_t handl
 #endif
 }
 
-void SparseMatrix::multiplyVectorTranspose(const Real* x, Real* y, cusparseHandle_t handle) const {
+void SparseMatrix::multiplyVectorTranspose(const Real* x, Real* y, cusparseHandle_t handle,
+                                          void* dBuffer, size_t* bufferSize) const {
     if (nnz_ == 0 || nCols_ == 0) {
         return;
     }
@@ -165,32 +197,57 @@ void SparseMatrix::multiplyVectorTranspose(const Real* x, Real* y, cusparseHandl
     const Real beta = 0.0;
     
 #if CUSPARSE_VERSION >= 11000
-    cusparseSpMatDescr_t mat;
+    // OPTIMIZATION: Cache matrix descriptor (reused across calls)
+    if (!cachedSpMatDescr_) {
+        cusparseCreateCsr(&cachedSpMatDescr_,
+                         nRows_, nCols_, nnz_,
+                         d_rowPtr_, d_colInd_, d_values_,
+                         CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                         CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+    }
+    
     cusparseDnVecDescr_t vecX, vecY;
-    cusparseCreateCsr(&mat,
-                      nRows_, nCols_, nnz_,
-                      d_rowPtr_, d_colInd_, d_values_,
-                      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
     cusparseCreateDnVec(&vecX, nRows_, const_cast<Real*>(x), CUDA_R_64F);
     cusparseCreateDnVec(&vecY, nCols_, y, CUDA_R_64F);
     
-    size_t bufferSize = 0;
-    void* dBuffer = nullptr;
+    size_t requiredBufferSize = 0;
     cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_TRANSPOSE,
-                            &alpha, mat, vecX, &beta, vecY,
-                            CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-    if (bufferSize > 0) {
-        cudaMalloc(&dBuffer, bufferSize);
+                            &alpha, cachedSpMatDescr_, vecX, &beta, vecY,
+                            CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &requiredBufferSize);
+    
+    // Use provided buffer, cached buffer, or allocate temporary
+    void* workBuffer = nullptr;
+    if (dBuffer && bufferSize && *bufferSize >= requiredBufferSize) {
+        workBuffer = dBuffer;  // Use provided pooled buffer
+    } else if (cachedSpMVBufferSize_ >= requiredBufferSize) {
+        workBuffer = cachedSpMVBuffer_;  // Use cached buffer
+    } else if (requiredBufferSize > 0) {
+        // Allocate temporary (or update cache if no provided buffer)
+        if (!dBuffer) {
+            ensureSpMVBuffer(requiredBufferSize);
+            workBuffer = cachedSpMVBuffer_;
+        } else {
+            // Provided buffer too small, allocate temporary
+            cudaMalloc(&workBuffer, requiredBufferSize);
+        }
     }
+    
     cusparseSpMV(handle, CUSPARSE_OPERATION_TRANSPOSE,
-                 &alpha, mat, vecX, &beta, vecY,
-                 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer);
-    if (dBuffer) cudaFree(dBuffer);
+                 &alpha, cachedSpMatDescr_, vecX, &beta, vecY,
+                 CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, workBuffer);
+    
+    // Free temporary buffer if we allocated one (not cached, not provided)
+    if (workBuffer && workBuffer != dBuffer && workBuffer != cachedSpMVBuffer_) {
+        cudaFree(workBuffer);
+    }
+    
+    // Update buffer size hint if provided
+    if (bufferSize) {
+        *bufferSize = requiredBufferSize;
+    }
     
     cusparseDestroyDnVec(vecX);
     cusparseDestroyDnVec(vecY);
-    cusparseDestroySpMat(mat);
 #else
     cusparseMatDescr_t descr;
     cusparseCreateMatDescr(&descr);
@@ -209,7 +266,14 @@ void SparseMatrix::multiplyVectorTranspose(const Real* x, Real* y, cusparseHandl
 
 void SparseMatrix::buildFromDevicePointers(Real* d_values, Index* d_rowPtr, Index* d_colInd,
                                             Index nRows, Index nCols, Index nnz) {
-    clear(); // Free any existing memory
+    // OPTIMIZATION: Only clear cached descriptors if structure changed
+    bool structureChanged = (nRows_ != nRows || nCols_ != nCols || nnz_ != nnz);
+    if (structureChanged) {
+        freeCachedDescriptors();
+    }
+    
+    // Free old device memory if we owned it
+    freeDeviceMemory();
     
     d_values_ = d_values;
     d_rowPtr_ = d_rowPtr;
@@ -221,9 +285,43 @@ void SparseMatrix::buildFromDevicePointers(Real* d_values, Index* d_rowPtr, Inde
 
 void SparseMatrix::clear() {
     freeDeviceMemory();
+    freeCachedDescriptors();
     nRows_ = 0;
     nCols_ = 0;
     nnz_ = 0;
+}
+
+void SparseMatrix::freeCachedDescriptors() const {
+#if CUSPARSE_VERSION >= 11000
+    if (cachedSpMatDescr_) {
+        cusparseDestroySpMat(cachedSpMatDescr_);
+        cachedSpMatDescr_ = nullptr;
+    }
+    if (cachedSpMVBuffer_) {
+        cudaFree(cachedSpMVBuffer_);
+        cachedSpMVBuffer_ = nullptr;
+        cachedSpMVBufferSize_ = 0;
+    }
+#endif
+}
+
+void SparseMatrix::ensureSpMVBuffer(size_t requiredSize) const {
+#if CUSPARSE_VERSION >= 11000
+    if (cachedSpMVBufferSize_ < requiredSize) {
+        if (cachedSpMVBuffer_) {
+            cudaFree(cachedSpMVBuffer_);
+        }
+        if (requiredSize > 0) {
+            cudaError_t err = cudaMalloc(&cachedSpMVBuffer_, requiredSize);
+            if (err == cudaSuccess) {
+                cachedSpMVBufferSize_ = requiredSize;
+            } else {
+                cachedSpMVBuffer_ = nullptr;
+                cachedSpMVBufferSize_ = 0;
+            }
+        }
+    }
+#endif
 }
 
 } // namespace math

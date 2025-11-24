@@ -13,16 +13,14 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
-
-#ifdef USE_CUDA
 #include <sle/cuda/CudaPowerFlow.h>
+
 // Forward declaration
 namespace sle {
 namespace cuda {
     class CudaDataManager;
 }
 }
-#endif
 
 namespace sle {
 namespace model {
@@ -64,6 +62,10 @@ public:
     std::vector<const Branch*> getBranchesFromBus(BusId busId) const;
     std::vector<const Branch*> getBranchesToBus(BusId busId) const;
     
+    // OPTIMIZED: Get branch by from/to bus IDs (O(1) lookup)
+    Branch* getBranchByBuses(BusId fromBus, BusId toBus);
+    const Branch* getBranchByBuses(BusId fromBus, BusId toBus) const;
+    
     // Base values
     void setBaseMVA(Real baseMVA) { baseMVA_ = baseMVA; }
     Real getBaseMVA() const { return baseMVA_; }
@@ -101,8 +103,6 @@ public:
     // This eliminates redundant GPU computations and host-device transfers
     
 private:
-    
-#ifdef USE_CUDA
     // Cached device data structures (updated incrementally)
     mutable std::vector<sle::cuda::DeviceBus> cachedDeviceBuses_;
     mutable std::vector<sle::cuda::DeviceBranch> cachedDeviceBranches_;
@@ -116,7 +116,6 @@ private:
     
     // Internal data manager for GPU operations when no external one is provided
     mutable std::shared_ptr<sle::cuda::CudaDataManager> internalDataManager_;
-#endif
     
     // Adjacency lists for O(1) branch queries (updated on changes)
     mutable std::vector<std::vector<Index>> branchesFromBus_;  // branchesFromBus_[busIdx] = branch indices
@@ -130,10 +129,8 @@ private:
     mutable std::vector<Real> cachedQInjection_;
     
     // Helper methods
-#ifdef USE_CUDA
     void updateDeviceData() const;
     sle::cuda::CudaDataManager* getInternalDataManager() const;
-#endif
     void updateAdjacencyLists() const;
     void invalidateCaches();
     
@@ -142,6 +139,17 @@ private:
     std::unordered_map<BusId, Index> busIndexMap_;
     std::unordered_map<BranchId, Index> branchIndexMap_;
     std::unordered_map<std::string, Index> busNameMap_;  // Name -> index mapping for O(1) lookup
+    
+    // OPTIMIZATION: Fast branch lookup by (fromBus, toBus) pair (O(1) instead of O(avg_degree))
+    // Key: pair<fromBus, toBus>, Value: branch index
+    // Note: std::pair has a default hash function in C++11+, but we use a custom one for better distribution
+    struct BusPairHash {
+        std::size_t operator()(const std::pair<BusId, BusId>& p) const {
+            // Combine both IDs with a simple hash (works well for power system IDs)
+            return std::hash<BusId>{}(p.first) ^ (std::hash<BusId>{}(p.second) << 1);
+        }
+    };
+    std::unordered_map<std::pair<BusId, BusId>, Index, BusPairHash> branchBusPairMap_;
     
     Real baseMVA_;
     BusId referenceBus_;

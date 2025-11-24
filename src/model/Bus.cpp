@@ -5,7 +5,10 @@
  */
 
 #include <sle/model/Bus.h>
+#include <sle/model/TelemetryData.h>
+#include <sle/model/MeasurementDevice.h>
 #include <cmath>
+#include <limits>
 
 namespace sle {
 namespace model {
@@ -91,6 +94,76 @@ Bus& Bus::operator=(const Bus& other) {
         qInjectionMVAR_ = other.qInjectionMVAR_;
     }
     return *this;
+}
+
+std::vector<const MeasurementDevice*> Bus::getAssociatedDevices(const TelemetryData& telemetry) const {
+    return telemetry.getDevicesByBus(id_);
+}
+
+std::vector<const MeasurementModel*> Bus::getMeasurementsFromDevices(const TelemetryData& telemetry) const {
+    std::vector<const MeasurementModel*> result;
+    auto devices = getAssociatedDevices(telemetry);
+    // Pre-allocate capacity for efficiency
+    size_t totalMeasurements = 0;
+    for (const auto* device : devices) {
+        totalMeasurements += device->getMeasurements().size();
+    }
+    result.reserve(totalMeasurements);
+    
+    for (const auto* device : devices) {
+        const auto& measurements = device->getMeasurements();
+        result.insert(result.end(), measurements.begin(), measurements.end());
+    }
+    return result;
+}
+
+std::vector<const MeasurementModel*> Bus::getMeasurementsFromDevices(const TelemetryData& telemetry, MeasurementType type) const {
+    std::vector<const MeasurementModel*> result;
+    auto devices = getAssociatedDevices(telemetry);
+    // Pre-allocate capacity estimate
+    result.reserve(devices.size());
+    
+    for (const auto* device : devices) {
+        const auto& measurements = device->getMeasurements();
+        for (const auto* measurement : measurements) {
+            if (measurement->getType() == type) {
+                result.push_back(measurement);
+            }
+        }
+    }
+    return result;
+}
+
+Real Bus::getCurrentVoltageMeasurement(const TelemetryData& telemetry) const {
+    auto measurements = getMeasurementsFromDevices(telemetry, MeasurementType::V_MAGNITUDE);
+    if (!measurements.empty()) {
+        // Return the most recent measurement (if multiple devices)
+        // In practice, there's usually one voltmeter per bus
+        return measurements[0]->getValue();
+    }
+    return std::numeric_limits<Real>::quiet_NaN();
+}
+
+bool Bus::getCurrentPowerInjections(const TelemetryData& telemetry, Real& pInjection, Real& qInjection) const {
+    auto pMeasurements = getMeasurementsFromDevices(telemetry, MeasurementType::P_INJECTION);
+    auto qMeasurements = getMeasurementsFromDevices(telemetry, MeasurementType::Q_INJECTION);
+    
+    bool found = false;
+    if (!pMeasurements.empty()) {
+        pInjection = pMeasurements[0]->getValue();
+        found = true;
+    } else {
+        pInjection = 0.0;
+    }
+    
+    if (!qMeasurements.empty()) {
+        qInjection = qMeasurements[0]->getValue();
+        found = true;
+    } else {
+        qInjection = 0.0;
+    }
+    
+    return found;
 }
 
 } // namespace model

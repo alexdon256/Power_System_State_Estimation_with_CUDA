@@ -33,6 +33,9 @@ struct SLE_API LoadFlowResult {
     std::string message;
 };
 
+// Forward declaration
+class Solver;
+
 class SLE_API LoadFlow {
 public:
     LoadFlow();
@@ -60,10 +63,8 @@ private:
     // Fast decoupled load flow
     LoadFlowResult solveFastDecoupled(const model::NetworkModel* network, const model::StateVector* initialState);
     
-    // Build power flow Jacobian
-    void buildPowerFlowJacobian(const model::NetworkModel& network, const model::StateVector& state,
-                               std::vector<Complex>& J, std::vector<Index>& rowPtr,
-                               std::vector<Index>& colInd) const;
+    // OPTIMIZATION: Persistent Solver instance to reuse GPU resources across solves
+    std::unique_ptr<Solver> solver_;
 };
 
 } // namespace math

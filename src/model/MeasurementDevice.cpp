@@ -1,0 +1,71 @@
+/*
+ * Copyright (c) 2024 AlexD Oleksandr Don
+ * 
+ * Power System State Estimation with CUDA
+ */
+
+#include <sle/model/MeasurementDevice.h>
+#include <sle/model/MeasurementModel.h>
+#include <algorithm>
+
+namespace sle {
+namespace model {
+
+MeasurementDevice::MeasurementDevice(DeviceId id, const std::string& name)
+    : id_(id), name_(name), status_(DeviceStatus::OPERATIONAL), accuracy_(0.01) {
+}
+
+void MeasurementDevice::addMeasurement(MeasurementModel* measurement) {
+    if (!measurement) return;
+    
+    // Check if already added
+    auto it = std::find(measurements_.begin(), measurements_.end(), measurement);
+    if (it == measurements_.end()) {
+        measurements_.push_back(measurement);
+        // Set device ID in measurement if not already set
+        if (measurement->getDeviceId().empty()) {
+            measurement->setDeviceId(id_);
+        }
+    }
+}
+
+void MeasurementDevice::removeMeasurement(MeasurementModel* measurement) {
+    if (!measurement) return;
+    
+    auto it = std::find(measurements_.begin(), measurements_.end(), measurement);
+    if (it != measurements_.end()) {
+        measurements_.erase(it);
+    }
+}
+
+Multimeter::Multimeter(DeviceId id, BranchId branchId, BusId fromBus, BusId toBus,
+                       Real ctRatio, Real ptRatio, const std::string& name)
+    : MeasurementDevice(id, name),
+      branchId_(branchId), fromBus_(fromBus), toBus_(toBus),
+      ctRatio_(ctRatio), ptRatio_(ptRatio) {
+}
+
+Real Multimeter::applyTransformerRatio(Real rawValue) const {
+    return rawValue * getTransformerRatio();
+}
+
+Real Multimeter::reverseTransformerRatio(Real measuredValue) const {
+    Real ratio = getTransformerRatio();
+    return (ratio > 0.0) ? measuredValue / ratio : measuredValue;
+}
+
+Voltmeter::Voltmeter(DeviceId id, BusId busId, Real ptRatio, const std::string& name)
+    : MeasurementDevice(id, name), busId_(busId), ptRatio_(ptRatio) {
+}
+
+Real Voltmeter::applyPTRatio(Real rawValue) const {
+    return rawValue * ptRatio_;
+}
+
+Real Voltmeter::reversePTRatio(Real measuredValue) const {
+    return (ptRatio_ > 0.0) ? measuredValue / ptRatio_ : measuredValue;
+}
+
+} // namespace model
+} // namespace sle
+

@@ -29,16 +29,19 @@ All intensive operations run on GPU using CUDA, cuSPARSE, and cuSOLVER:
 1. **Fused Multiply-Add (FMA)**: Single instruction for `a*b+c`, 1.5-2x faster
 2. **Simultaneous Sin/Cos**: `__sincos()` instead of separate calls, 1.5-2x faster
 3. **Warp Shuffles**: Efficient reductions, 1.5-2x faster
-4. **Memory Pool**: Reuse buffers across iterations, 100-500x faster allocations
-5. **Stream-Based Execution**: Overlap computation and memory transfers
+4. **Memory Pool**: 
+   - Reuse buffers across iterations for solver workspaces (`d_spgemmBuffer`, `d_spmvBuffer`)
+   - 100-500x faster allocations by avoiding `cudaMalloc` in the loop
+5. **Stream-Based Execution**: Overlap computation and memory transfers (`computeStream`, `transferStream`)
 6. **Shared Memory Caching**: Cache frequently accessed data, 5-10% improvement
 7. **Kernel Fusion**: Combine operations to reduce launch overhead, 2-5% improvement
 8. **Zero-Copy Topology Reuse**: Skip re-uploading static network data (topology) for real-time updates, reducing PCIe bandwidth usage by 90%+.
-9. **Asynchronous Pipeline**: Fully asynchronous execution pipeline from measurement evaluation to linear solve.
+9. **Cached Descriptors**: Reuse `cusparseSpMatDescr_t` and `cusparseDnVecDescr_t` to avoid overhead.
+10. **IRLS Optimization**: Reuse residuals and weights vectors between Robust Estimator iterations.
 
 ### CPU Optimizations
 
-- **OpenMP Parallelization**: 4-8x speedup on multi-core CPUs
+- **OpenMP Parallelization**: 4-8x speedup on multi-core CPUs for host-side tasks (weight updates, bad data post-processing)
 - **SIMD Vectorization**: 2-8x speedup with vector instructions
 - **Memory Pre-allocation**: 2-10x faster with reserved vectors
 
@@ -48,7 +51,7 @@ The system is designed for high-frequency real-time estimation:
 
 1.  **Initialization**:
     *   Build Network Model and Jacobian Structure once.
-    *   Allocate GPU buffers once (persisted `Solver`).
+    *   Allocate GPU buffers once (persisted `Solver` and `MemoryPool`).
     *   Initialize cuSPARSE/cuSOLVER handles.
 
 2.  **Per-Cycle Update**:

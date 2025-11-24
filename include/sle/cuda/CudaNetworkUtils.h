@@ -11,11 +11,8 @@
 
 #include <sle/Types.h>
 #include <sle/cuda/CudaPowerFlow.h>
-#include <vector>
-
-#ifdef USE_CUDA
 #include <cuda_runtime.h>
-#endif
+#include <vector>
 
 // Forward declarations
 namespace sle {

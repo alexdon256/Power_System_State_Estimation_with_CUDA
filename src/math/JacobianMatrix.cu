@@ -11,12 +11,8 @@
 #include <sle/cuda/CudaPowerFlow.h>
 #include <sle/cuda/CudaNetworkUtils.h>
 #include <sle/cuda/CudaDataManager.h>
-#include <stdexcept>
-
-#ifdef USE_CUDA
-#include <sle/cuda/CudaPowerFlow.h>
 #include <cuda_runtime.h>
-#endif
+#include <stdexcept>
 
 namespace sle {
 namespace math {
@@ -141,7 +137,6 @@ void JacobianMatrix::buildGPU(const StateVector& state,
         buildStructure(network, telemetry);
     }
     
-#ifdef USE_CUDA
     // Get state data
     const auto& v = state.getMagnitudes();
     const auto& theta = state.getAngles();
@@ -331,11 +326,6 @@ cleanup:
     if (d_jacobianRowPtr) cudaFree(d_jacobianRowPtr);
     if (d_jacobianColInd) cudaFree(d_jacobianColInd);
     if (d_jacobianValues) cudaFree(d_jacobianValues);
-#else
-    // CUDA-EXCLUSIVE: GPU required
-    // If CUDA is not available, this should not be called
-    throw std::runtime_error("CUDA is required for JacobianMatrix::buildGPU()");
-#endif
 }
 
 void JacobianMatrix::buildGPUFromPointers(const Real* d_v, const Real* d_theta,

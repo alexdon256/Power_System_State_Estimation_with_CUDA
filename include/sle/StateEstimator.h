@@ -14,7 +14,6 @@
 #include <sle/interface/Results.h>
 #include <sle/math/RobustEstimator.h>
 #include <sle/math/LoadFlow.h>
-#include <sle/math/CuSOLVERIntegration.h>
 #include <sle/observability/OptimalPlacement.h>
 #include <sle/multiarea/MultiAreaEstimator.h>
 #include <sle/io/PMUData.h>

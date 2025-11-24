@@ -42,7 +42,8 @@ enum class MeasurementType {
     V_ANGLE,          // Voltage angle
     V_PHASOR,         // Voltage phasor (PMU)
     I_PHASOR,         // Current phasor (PMU)
-    PSEUDO            // Pseudo measurement (forecast)
+    PSEUDO,           // Pseudo measurement (forecast)
+    BREAKER_STATUS    // Circuit breaker status (1.0=Closed, 0.0=Open)
 };
 
 // Measurement status
@@ -52,6 +53,11 @@ enum class MeasurementStatus {
     BAD,
     MISSING
 };
+
+// Forward declaration for device status (defined in MeasurementDevice.h)
+namespace model {
+    enum class DeviceStatus;
+}
 
 } // namespace sle
 

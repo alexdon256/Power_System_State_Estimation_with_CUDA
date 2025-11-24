@@ -6,16 +6,13 @@
 
 #include <sle/model/NetworkModel.h>
 #include <sle/model/StateVector.h>
-#include <algorithm>
-#include <cmath>
-
-#ifdef USE_CUDA
 #include <sle/cuda/CudaPowerFlow.h>
 #include <sle/cuda/CudaDataManager.h>
 #include <sle/cuda/CudaNetworkUtils.h>
 #include <sle/cuda/CudaUtils.h>
 #include <cuda_runtime.h>
-#endif
+#include <algorithm>
+#include <cmath>
 
 #ifdef USE_OPENMP
 #include <omp.h>
@@ -26,14 +23,11 @@ namespace sle {
 namespace model {
 
 NetworkModel::NetworkModel()
-#ifdef USE_CUDA
     : deviceDataDirty_(true)
     , internalDataManager_(nullptr)
-#endif
     , adjacencyDirty_(true)
     , baseMVA_(100.0)
     , referenceBus_(-1) {
-    // Initialization order: CUDA members (if enabled) -> adjacencyDirty_ -> baseMVA_ -> referenceBus_
 }
 
 NetworkModel::~NetworkModel() = default;
@@ -133,8 +127,13 @@ Branch* NetworkModel::addBranch(BranchId id, BusId fromBus, BusId toBus) {
     
     auto branch = std::make_unique<Branch>(id, fromBus, toBus);
     Branch* branchPtr = branch.get();
-    branchIndexMap_[id] = branches_.size();
+    Index branchIdx = static_cast<Index>(branches_.size());
+    branchIndexMap_[id] = branchIdx;
     branches_.push_back(std::move(branch));
+    
+    // Update fast lookup map for (fromBus, toBus) pairs
+    branchBusPairMap_[std::make_pair(fromBus, toBus)] = branchIdx;
+    
     invalidateCaches();
     return branchPtr;
 }
@@ -241,6 +240,28 @@ std::vector<const Branch*> NetworkModel::getBranchesToBus(BusId busId) const {
     return result;
 }
 
+Branch* NetworkModel::getBranchByBuses(BusId fromBus, BusId toBus) {
+    auto it = branchBusPairMap_.find(std::make_pair(fromBus, toBus));
+    if (it != branchBusPairMap_.end()) {
+        Index idx = it->second;
+        if (static_cast<size_t>(idx) < branches_.size()) {
+            return branches_[idx].get();
+        }
+    }
+    return nullptr;
+}
+
+const Branch* NetworkModel::getBranchByBuses(BusId fromBus, BusId toBus) const {
+    auto it = branchBusPairMap_.find(std::make_pair(fromBus, toBus));
+    if (it != branchBusPairMap_.end()) {
+        Index idx = it->second;
+        if (static_cast<size_t>(idx) < branches_.size()) {
+            return branches_[idx].get();
+        }
+    }
+    return nullptr;
+}
+
 void NetworkModel::setReferenceBus(BusId busId) {
     referenceBus_ = busId;
     Bus* bus = getBus(busId);
@@ -271,7 +292,23 @@ void NetworkModel::updateBranch(BranchId id, const Branch& branchData) {
     // Direct lookup
     auto it = branchIndexMap_.find(id);
     if (it != branchIndexMap_.end() && static_cast<size_t>(it->second) < branches_.size()) {
-        *branches_[it->second] = branchData;  // Uses copy assignment operator
+        Index idx = it->second;
+        Branch* oldBranch = branches_[idx].get();
+        
+        // Update fast lookup map if bus IDs changed
+        if (oldBranch) {
+            auto oldPair = std::make_pair(oldBranch->getFromBus(), oldBranch->getToBus());
+            branchBusPairMap_.erase(oldPair);
+        }
+        
+        *branches_[idx] = branchData;  // Uses copy assignment operator
+        
+        // Update fast lookup map with new bus IDs
+        Branch* newBranch = branches_[idx].get();
+        if (newBranch) {
+            auto newPair = std::make_pair(newBranch->getFromBus(), newBranch->getToBus());
+            branchBusPairMap_[newPair] = idx;
+        }
     }
 }
 
@@ -311,13 +348,30 @@ void NetworkModel::removeBranch(BranchId id) {
     auto it = branchIndexMap_.find(id);
     if (it != branchIndexMap_.end()) {
         Index idx = it->second;
+        
+        // Remove from fast lookup map
+        if (static_cast<size_t>(idx) < branches_.size()) {
+            const Branch* branch = branches_[idx].get();
+            if (branch) {
+                branchBusPairMap_.erase(std::make_pair(branch->getFromBus(), branch->getToBus()));
+            }
+        }
+        
         branches_.erase(branches_.begin() + idx);
         branchIndexMap_.erase(it);
         
         // Update indices for all branches after the removed one (indices shifted down by 1)
+        // Also update fast lookup map for affected branches
         for (size_t i = idx; i < branches_.size(); ++i) {
             BranchId branchId = branches_[i]->getId();
             branchIndexMap_[branchId] = static_cast<Index>(i);
+            
+            // Update fast lookup map
+            const Branch* branch = branches_[i].get();
+            if (branch) {
+                auto pairKey = std::make_pair(branch->getFromBus(), branch->getToBus());
+                branchBusPairMap_[pairKey] = static_cast<Index>(i);
+            }
         }
         
         invalidateCaches();
@@ -330,6 +384,7 @@ void NetworkModel::clear() {
     busIndexMap_.clear();
     branchIndexMap_.clear();
     busNameMap_.clear();  // Clear name index
+    branchBusPairMap_.clear();  // Clear fast lookup map
     referenceBus_ = -1;
     // Clear cached vectors
     cachedPInjection_.clear();
@@ -340,9 +395,7 @@ void NetworkModel::clear() {
 void NetworkModel::invalidateCaches() {
     // Note: We don't clear cached vectors here - they're resized on-demand
     // This allows reuse across multiple computations without reallocation
-#ifdef USE_CUDA
     deviceDataDirty_ = true;
-#endif
     adjacencyDirty_ = true;
 }
 
@@ -378,17 +431,20 @@ void NetworkModel::updateAdjacencyLists() const {
         Index toIdx = getBusIndex(branch->getToBus());
         
         if (fromIdx >= 0 && static_cast<size_t>(fromIdx) < nBuses) {
+            if (branch->isOn()) { // Only include active branches
             branchesFromBus_[fromIdx].push_back(static_cast<Index>(i));
+            }
         }
         if (toIdx >= 0 && static_cast<size_t>(toIdx) < nBuses) {
+            if (branch->isOn()) { // Only include active branches
             branchesToBus_[toIdx].push_back(static_cast<Index>(i));
+            }
         }
     }
     
     adjacencyDirty_ = false;
 }
 
-#ifdef USE_CUDA
 sle::cuda::CudaDataManager* NetworkModel::getInternalDataManager() const {
     if (!internalDataManager_) {
         internalDataManager_ = std::make_shared<sle::cuda::CudaDataManager>();
@@ -430,7 +486,6 @@ void NetworkModel::updateDeviceData() const {
     
     deviceDataDirty_ = false;
 }
-#endif
 
 void NetworkModel::computePowerInjections(const StateVector& state) {
     size_t nBuses = buses_.size();
@@ -495,7 +550,6 @@ void NetworkModel::computePowerInjections(const StateVector& state,
     std::fill(pInjection.begin(), pInjection.end(), 0.0);
     std::fill(qInjection.begin(), qInjection.end(), 0.0);
     
-#ifdef USE_CUDA
     // Determine which data manager to use
     sle::cuda::CudaDataManager* activeManager = dataManager;
     if (!activeManager) {
@@ -510,33 +564,33 @@ void NetworkModel::computePowerInjections(const StateVector& state,
                                      0); // No measurements needed for power injections
         }
         
-        // Update state in shared data manager
-        const auto& v = state.getMagnitudes();
-        const auto& theta = state.getAngles();
+            // Update state in shared data manager
+            const auto& v = state.getMagnitudes();
+            const auto& theta = state.getAngles();
         activeManager->updateState(v.data(), theta.data(), static_cast<Index>(nBuses));
-        
-        // Update network data if needed (builds CSR format)
-        updateDeviceData();
-        
-        // Update network data in shared data manager
+            
+            // Update network data if needed (builds CSR format)
+            updateDeviceData();
+            
+            // Update network data in shared data manager
         activeManager->updateNetwork(
-            cachedDeviceBuses_.data(),
-            cachedDeviceBranches_.data(),
-            static_cast<Index>(nBuses),
-            static_cast<Index>(nBranches));
-        
-        // Update adjacency lists in shared data manager
+                cachedDeviceBuses_.data(),
+                cachedDeviceBranches_.data(),
+                static_cast<Index>(nBuses),
+                static_cast<Index>(nBranches));
+            
+            // Update adjacency lists in shared data manager
         activeManager->updateAdjacency(
-            cachedBranchFromBus_.data(),
-            cachedBranchFromBusRowPtr_.data(),
-            cachedBranchToBus_.data(),
-            cachedBranchToBusRowPtr_.data(),
-            static_cast<Index>(nBuses),
-            static_cast<Index>(cachedBranchFromBus_.size()),
-            static_cast<Index>(cachedBranchToBus_.size()));
-        
-        // Launch GPU kernel using shared data manager pointers
-        sle::cuda::computeAllPowerInjectionsGPU(
+                cachedBranchFromBus_.data(),
+                cachedBranchFromBusRowPtr_.data(),
+                cachedBranchToBus_.data(),
+                cachedBranchToBusRowPtr_.data(),
+                static_cast<Index>(nBuses),
+                static_cast<Index>(cachedBranchFromBus_.size()),
+                static_cast<Index>(cachedBranchToBus_.size()));
+            
+            // Launch GPU kernel using shared data manager pointers
+            sle::cuda::computeAllPowerInjectionsGPU(
             activeManager->getStateV(),
             activeManager->getStateTheta(),
             activeManager->getBuses(),
@@ -547,10 +601,10 @@ void NetworkModel::computePowerInjections(const StateVector& state,
             activeManager->getBranchToBusRowPtr(),
             activeManager->getPInjection(),
             activeManager->getQInjection(),
-            static_cast<Index>(nBuses),
-            static_cast<Index>(nBranches));
-        
-        // Copy back results
+                static_cast<Index>(nBuses),
+                static_cast<Index>(nBranches));
+            
+            // Copy back results
         cudaMemcpy(pInjection.data(), activeManager->getPInjection(), 
                   nBuses * sizeof(Real), cudaMemcpyDeviceToHost);
         cudaMemcpy(qInjection.data(), activeManager->getQInjection(), 
@@ -559,9 +613,6 @@ void NetworkModel::computePowerInjections(const StateVector& state,
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("CUDA power injection computation failed: ") + e.what());
     }
-#else
-    throw std::runtime_error("CUDA is required for NetworkModel::computePowerInjections()");
-#endif
 }
 
 

@@ -127,13 +127,16 @@ void scaleSparseMatrixRows(cusparseHandle_t handle,
 // Compute gain matrix G = H^T * W * H on GPU using cuSPARSE SpGEMM
 // Strategy: First compute W*H, then compute H^T*(W*H)
 // If d_WH_values is provided (pooled buffer), uses it instead of allocating
+// If d_spgemmBuffer1/2 are provided (pooled workspace), uses them (resizing if needed via reference)
 // Returns true on success, false on failure (fallback to CPU)
 bool computeGainMatrixGPU(cusparseHandle_t handle,
                           const Real* H_values, const Index* H_rowPtr, const Index* H_colInd,
                           const Real* weights,
                           Real*& G_values, Index* G_rowPtr, Index*& G_colInd,
                           Index nMeas, Index nStates, Index& G_nnz,
-                          Real* d_WH_values, size_t WH_valuesSize) {
+                          Real* d_WH_values, size_t WH_valuesSize,
+                          void*& d_spgemmBuffer1, size_t& spgemmBuffer1Size,
+                          void*& d_spgemmBuffer2, size_t& spgemmBuffer2Size) {
     if (nMeas == 0 || nStates == 0) {
         G_nnz = 0;
         cudaMemset(G_rowPtr, 0, (nStates + 1) * sizeof(Index));
@@ -196,7 +199,6 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
     
     // G matrix descriptor (nStates x nStates) - output
     // If reusing, provide existing pointers, otherwise null (to compute size first)
-    cusparseSpMatDescr_t matG;
     status = cusparseCreateCsr(&matG, nStates, nStates, reuseBuffers ? G_nnz : 0,
                                 G_rowPtr, reuseBuffers ? G_colInd : nullptr, reuseBuffers ? G_values : nullptr,
                                 CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
@@ -229,33 +231,46 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
                                            CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                            &alpha, matH, matWH, &beta, matG,
                                            CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
-                                           spgemmDesc, &bufferSize1, dBuffer1);
-    if (status != CUSPARSE_STATUS_SUCCESS) {
-        cusparseSpGEMM_destroyDescr(spgemmDesc);
-        cusparseDestroySpMat(matH);
-        cusparseDestroySpMat(matWH);
-        cusparseDestroySpMat(matG);
-        if (WH_values && !usePooledBuffer) cudaFree(WH_values);
-        return false;
-    }
+                                           spgemmDesc, &bufferSize1, nullptr);
     
+    // OPTIMIZATION: Reuse pooled workspace buffer if large enough
+    bool usingPooledBuffer1 = false;
     if (bufferSize1 > 0) {
-        err = cudaMalloc(&dBuffer1, bufferSize1);
-        if (err != cudaSuccess) {
-            cusparseSpGEMM_destroyDescr(spgemmDesc);
-            cusparseDestroySpMat(matH);
-            cusparseDestroySpMat(matWH);
-            cusparseDestroySpMat(matG);
-            if (WH_values && !usePooledBuffer) cudaFree(WH_values);
-            return false;
+        if (d_spgemmBuffer1 != nullptr && spgemmBuffer1Size >= bufferSize1) {
+            dBuffer1 = d_spgemmBuffer1;
+            usingPooledBuffer1 = true;
+        } else {
+            // Free old pooled buffer if exists but too small
+            if (d_spgemmBuffer1 != nullptr) {
+                cudaFree(d_spgemmBuffer1);
+                d_spgemmBuffer1 = nullptr;
+                spgemmBuffer1Size = 0;
+            }
+            // Allocate new buffer (and pool it)
+            err = cudaMalloc(&d_spgemmBuffer1, bufferSize1);
+            if (err != cudaSuccess) {
+                cusparseSpGEMM_destroyDescr(spgemmDesc);
+                cusparseDestroySpMat(matH);
+                cusparseDestroySpMat(matWH);
+                cusparseDestroySpMat(matG);
+                if (WH_values && !usePooledBuffer) cudaFree(WH_values);
+                return false;
+            }
+            dBuffer1 = d_spgemmBuffer1;
+            spgemmBuffer1Size = bufferSize1;
+            usingPooledBuffer1 = true;
         }
+        
+        // Call again with allocated buffer
         status = cusparseSpGEMM_workEstimation(handle,
                                                CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                                &alpha, matH, matWH, &beta, matG,
                                                CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
                                                spgemmDesc, &bufferSize1, dBuffer1);
+        
         if (status != CUSPARSE_STATUS_SUCCESS) {
-            cudaFree(dBuffer1);
+             // Don't free dBuffer1 if pooled
+            if (!usingPooledBuffer1 && dBuffer1) cudaFree(dBuffer1);
             cusparseSpGEMM_destroyDescr(spgemmDesc);
             cusparseDestroySpMat(matH);
             cusparseDestroySpMat(matWH);
@@ -272,36 +287,49 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
                                     CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                     &alpha, matH, matWH, &beta, matG,
                                     CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
-                                    spgemmDesc, &bufferSize2, dBuffer2);
-    if (status != CUSPARSE_STATUS_SUCCESS) {
-        if (dBuffer1) cudaFree(dBuffer1);
-        cusparseSpGEMM_destroyDescr(spgemmDesc);
-        cusparseDestroySpMat(matH);
-        cusparseDestroySpMat(matWH);
-        cusparseDestroySpMat(matG);
-        if (WH_values && !usePooledBuffer) cudaFree(WH_values);
-        return false;
-    }
+                                    spgemmDesc, &bufferSize2, nullptr);
     
+    // OPTIMIZATION: Reuse pooled workspace buffer if large enough
+    bool usingPooledBuffer2 = false;
     if (bufferSize2 > 0) {
-        err = cudaMalloc(&dBuffer2, bufferSize2);
-        if (err != cudaSuccess) {
-            if (dBuffer1) cudaFree(dBuffer1);
-            cusparseSpGEMM_destroyDescr(spgemmDesc);
-            cusparseDestroySpMat(matH);
-            cusparseDestroySpMat(matWH);
-            cusparseDestroySpMat(matG);
-            if (WH_values && !usePooledBuffer) cudaFree(WH_values);
-            return false;
+         if (d_spgemmBuffer2 != nullptr && spgemmBuffer2Size >= bufferSize2) {
+            dBuffer2 = d_spgemmBuffer2;
+            usingPooledBuffer2 = true;
+        } else {
+            // Free old pooled buffer if exists but too small
+            if (d_spgemmBuffer2 != nullptr) {
+                cudaFree(d_spgemmBuffer2);
+                d_spgemmBuffer2 = nullptr;
+                spgemmBuffer2Size = 0;
+            }
+            // Allocate new buffer (and pool it)
+            err = cudaMalloc(&d_spgemmBuffer2, bufferSize2);
+             if (err != cudaSuccess) {
+                // Don't free dBuffer1 if pooled
+                if (!usingPooledBuffer1 && dBuffer1) cudaFree(dBuffer1);
+                cusparseSpGEMM_destroyDescr(spgemmDesc);
+                cusparseDestroySpMat(matH);
+                cusparseDestroySpMat(matWH);
+                cusparseDestroySpMat(matG);
+                if (WH_values && !usePooledBuffer) cudaFree(WH_values);
+                return false;
+            }
+            dBuffer2 = d_spgemmBuffer2;
+            spgemmBuffer2Size = bufferSize2;
+            usingPooledBuffer2 = true;
         }
+        
+        // Call again with allocated buffer
         status = cusparseSpGEMM_compute(handle,
                                         CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                         &alpha, matH, matWH, &beta, matG,
                                         CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
                                         spgemmDesc, &bufferSize2, dBuffer2);
+                                        
         if (status != CUSPARSE_STATUS_SUCCESS) {
-            if (dBuffer1) cudaFree(dBuffer1);
-            if (dBuffer2) cudaFree(dBuffer2);
+             // Don't free pooled buffers
+            if (!usingPooledBuffer1 && dBuffer1) cudaFree(dBuffer1);
+            if (!usingPooledBuffer2 && dBuffer2) cudaFree(dBuffer2);
             cusparseSpGEMM_destroyDescr(spgemmDesc);
             cusparseDestroySpMat(matH);
             cusparseDestroySpMat(matWH);
@@ -322,8 +350,9 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
             // Allocate output buffers
             err = cudaMalloc(&G_values, G_nnz * sizeof(Real));
             if (err != cudaSuccess) {
-                if (dBuffer1) cudaFree(dBuffer1);
-                if (dBuffer2) cudaFree(dBuffer2);
+                 // Don't free pooled buffers
+                if (!usingPooledBuffer1 && dBuffer1) cudaFree(dBuffer1);
+                if (!usingPooledBuffer2 && dBuffer2) cudaFree(dBuffer2);
                 cusparseSpGEMM_destroyDescr(spgemmDesc);
                 cusparseDestroySpMat(matH);
                 cusparseDestroySpMat(matWH);
@@ -335,8 +364,9 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
             err = cudaMalloc(&G_colInd, G_nnz * sizeof(Index));
             if (err != cudaSuccess) {
                 cudaFree(G_values);
-                if (dBuffer1) cudaFree(dBuffer1);
-                if (dBuffer2) cudaFree(dBuffer2);
+                // Don't free pooled buffers
+                if (!usingPooledBuffer1 && dBuffer1) cudaFree(dBuffer1);
+                if (!usingPooledBuffer2 && dBuffer2) cudaFree(dBuffer2);
                 cusparseSpGEMM_destroyDescr(spgemmDesc);
                 cusparseDestroySpMat(matH);
                 cusparseDestroySpMat(matWH);
@@ -357,8 +387,9 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
              if (status != CUSPARSE_STATUS_SUCCESS) {
                 cudaFree(G_values);
                 cudaFree(G_colInd);
-                if (dBuffer1) cudaFree(dBuffer1);
-                if (dBuffer2) cudaFree(dBuffer2);
+                // Don't free pooled buffers
+                if (!usingPooledBuffer1 && dBuffer1) cudaFree(dBuffer1);
+                if (!usingPooledBuffer2 && dBuffer2) cudaFree(dBuffer2);
                 cusparseSpGEMM_destroyDescr(spgemmDesc);
                 cusparseDestroySpMat(matH);
                 cusparseDestroySpMat(matWH);
@@ -370,8 +401,10 @@ bool computeGainMatrixGPU(cusparseHandle_t handle,
     }
     
     // Cleanup
-    if (dBuffer1) cudaFree(dBuffer1);
-    if (dBuffer2) cudaFree(dBuffer2);
+    // Note: Do NOT free dBuffer1 and dBuffer2 if they are pooled (usingPooledBuffer=true)
+    if (!usingPooledBuffer1 && dBuffer1) cudaFree(dBuffer1);
+    if (!usingPooledBuffer2 && dBuffer2) cudaFree(dBuffer2);
+    
     cusparseSpGEMM_destroyDescr(spgemmDesc);
     cusparseDestroySpMat(matH);
     cusparseDestroySpMat(matWH);

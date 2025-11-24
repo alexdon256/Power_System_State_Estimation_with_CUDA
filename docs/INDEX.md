@@ -5,14 +5,17 @@ Complete guide to all documentation in the State Estimation project.
 ## Getting Started
 
 - **[README.md](../README.md)** - Project overview, features, quick start guide, and documentation navigation
-- **[EASY_USAGE.md](EASY_USAGE.md)** - Quick start guide with convenience methods
-- **[API.md](API.md)** - Complete API documentation with examples
+- **[USAGE.md](USAGE.md)** - Complete usage guide from quick start to advanced operations
+- **[API.md](API.md)** - Complete API documentation with detailed examples
 - **[SETTERS_GETTERS.md](SETTERS_GETTERS.md)** - Complete reference for all setters and getters
 
 ## Core Features
 
-- **[REALTIME.md](REALTIME.md)** - Real-time operation guide
+- **[REALTIME.md](REALTIME.md)** - Real-time operation and dynamic network updates guide
 - **[MODEL_FORMAT.md](MODEL_FORMAT.md)** - Model format specifications (IEEE, JSON, CSV, SCADA, PMU)
+- **[IO_FORMATS.md](IO_FORMATS.md)** - File format specifications for measurements, devices, and network models
+- **[MEASUREMENT_DEVICES.md](MEASUREMENT_DEVICES.md)** - Measurement device modeling (multimeters, voltmeters, CT/PT)
+- **[MEASURED_VS_ESTIMATED.md](MEASURED_VS_ESTIMATED.md)** - Comparing measured values from devices with estimated values
 - **[FEATURES.md](FEATURES.md)** - Complete feature list, production requirements, and implementation status
 
 ## Performance & Optimization
@@ -22,7 +25,7 @@ Complete guide to all documentation in the State Estimation project.
 ## Building
 
 - **[BUILD_CUDA.md](BUILD_CUDA.md)** - Complete guide for building with CUDA support
-- **[DOXYGEN.md](DOXYGEN.md)** - Doxygen API documentation guide
+- **[COMPILERS.md](COMPILERS.md)** - Supported compilers and compatibility matrix
 
 ## Comparison & Assessment
 
@@ -57,6 +60,7 @@ All examples include detailed comments:
 - `realtimesetup.cpp` - Production real-time setup with asynchronous telemetry processing, incremental estimation, monitoring, and comprehensive reporting
 - `hybridsetup.cpp` - Hybrid setup combining fast WLS with periodic robust estimation, bad data detection, pre-validation (data consistency, observability), optimal placement, and computed values extraction
 - `advancedsetup.cpp` - Advanced features setup including robust estimation with value extraction and WLS comparison, load flow, optimal placement, transformers, PMU, and multi-area
+- `compare_measured_estimated.cpp` - Compare measured values from devices with estimated values from state estimation
 - `observability_example.cpp` - Observability analysis and restoration
 
 ## Build & Configuration

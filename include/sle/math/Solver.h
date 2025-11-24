@@ -13,25 +13,12 @@
 #include <sle/math/SparseMatrix.h>
 #include <sle/cuda/CudaDataManager.h>
 #include <sle/cuda/CudaUtils.h>
-#include <sle/math/CuSOLVERIntegration.h>
+#include <cusolverSp.h>
+#include <cusparse.h>
+#include <cuda_runtime.h>
 #include <memory>
 #include <vector>
 #include <string>
-
-#ifdef USE_CUDA
-#include <cuda_runtime.h>
-#else
-using cudaError_t = int;
-#define cudaSuccess 0
-inline cudaError_t cudaMalloc(void**, size_t) { return cudaSuccess; }
-inline cudaError_t cudaFree(void*) { return cudaSuccess; }
-inline cudaError_t cudaMemcpy(void*, const void*, size_t, int) { return cudaSuccess; }
-inline cudaError_t cudaMemset(void*, int, size_t) { return cudaSuccess; }
-inline cudaError_t cudaDeviceSynchronize() { return cudaSuccess; }
-#define cudaMemcpyHostToDevice 0
-inline const char* cudaGetErrorString(cudaError_t) { return "CUDA disabled"; }
-using cudaStream_t = void*;
-#endif
 
 // Forward declarations
 namespace sle {
@@ -86,6 +73,10 @@ public:
     // instead of recomputing them, eliminating redundant GPU computations
     void storeComputedValues(model::StateVector& state, model::NetworkModel& network);
     
+    // Get residuals from the last solve operation (avoids re-calculation for Bad Data Detection)
+    // Returns r = z - h(x)
+    void getLastResiduals(std::vector<Real>& residuals) const;
+
     void setUseUnifiedPool(bool use) { /* Deprecated */ }
     bool getUseUnifiedPool() const { return true; }
     
@@ -101,6 +92,9 @@ private:
     std::unique_ptr<JacobianMatrix> jacobian_;
     std::unique_ptr<MeasurementFunctions> measFuncs_;
     
+    // Track last problem size for reporting
+    Index lastNMeas_ = 0;
+    
     // Shared CudaDataManager for both MeasurementFunctions and JacobianMatrix
     std::unique_ptr<cuda::CudaDataManager> sharedDataManager_;
     
@@ -110,7 +104,8 @@ private:
     
     // Persistent handles and objects to avoid re-initialization
     cusparseHandle_t cusparseHandle_;
-    std::unique_ptr<CuSOLVERIntegration> cusolver_;
+    cusolverSpHandle_t cusolverHandle_;  // Merged from CuSOLVERIntegration
+    cusparseMatDescr_t cusparseDescr_;   // Merged from CuSOLVERIntegration
     SparseMatrix gainMatrix_;         // Reused gain matrix (preserves allocation)
     
     // Pinned memory buffers for frequently transferred data (faster transfers)
@@ -139,6 +134,9 @@ private:
         Real* d_qMVAR = nullptr;           // Pooled: MVAR values (computed on GPU) - may point to unified pool
         Real* d_iPU = nullptr;            // Pooled: Current in p.u. (computed on GPU) - may point to unified pool
         Real* d_iAmps = nullptr;          // Pooled: Current in Amperes (computed on GPU) - may point to unified pool
+        void* d_spgemmBuffer1 = nullptr;   // Pooled: SpGEMM workspace buffer 1
+        void* d_spgemmBuffer2 = nullptr;   // Pooled: SpGEMM workspace buffer 2
+        void* d_spmvBuffer = nullptr;      // Pooled: SpMV workspace buffer (for SparseMatrix operations)
         size_t residualSize = 0;
         size_t weightsSize = 0;
         size_t weightedResidualSize = 0;
@@ -154,6 +152,9 @@ private:
         size_t iPUSize = 0;
         size_t iAmpsSize = 0;
         size_t derivedQuantitiesSize = 0;  // Size of pooled derived quantity buffers
+        size_t spgemmBuffer1Size = 0;      // Size of SpGEMM workspace buffer 1
+        size_t spgemmBuffer2Size = 0;      // Size of SpGEMM workspace buffer 2
+        size_t spmvBufferSize = 0;         // Size of SpMV workspace buffer
         
         ~CudaMemoryPool() {
             if (d_residual) cudaFree(d_residual);
@@ -171,6 +172,9 @@ private:
             if (d_qMVAR) cudaFree(d_qMVAR);
             if (d_iPU) cudaFree(d_iPU);
             if (d_iAmps) cudaFree(d_iAmps);
+            if (d_spgemmBuffer1) cudaFree(d_spgemmBuffer1);
+            if (d_spgemmBuffer2) cudaFree(d_spgemmBuffer2);
+            if (d_spmvBuffer) cudaFree(d_spmvBuffer);
         }
         
         void ensureCapacity(size_t nMeas, size_t nStates, size_t nBranches = 0) {
@@ -218,6 +222,9 @@ private:
                 size_t maxH_nnz = nMeas * nStates;  // Conservative upper bound
                 cuda::ensureCapacity(d_WH_values, WH_valuesSize, maxH_nnz);
             }
+            
+            // Note: SpGEMM workspace buffers are allocated on-demand in computeGainMatrixGPU
+            // because their size is determined by cuSPARSE runtime API
             
             // Ensure derived quantity buffers (for power flow MW/MVAR/I_PU/I_Amps)
             if (nBranches > 0 && derivedQuantitiesSize < nBranches) {

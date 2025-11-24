@@ -47,6 +47,11 @@ estimator.setNetwork(std::make_shared<sle::model::NetworkModel>(*network));
 //            Measurements are automatically matched to network buses/branches
 auto telemetry = sle::interface::MeasurementLoader::loadTelemetry("measurements.csv", *network);
 
+// Optionally load measurement devices (multimeters, voltmeters) from CSV file
+// Devices are automatically linked to measurements via deviceId
+// Format: deviceType,deviceId,name,location,ctRatio,ptRatio,accuracy
+sle::interface::MeasurementLoader::loadDevices("devices.csv", *telemetry, *network);
+
 // Set telemetry data in the estimator
 // The estimator uses these measurements for the weighted least squares (WLS) estimation
 estimator.setTelemetryData(telemetry);
@@ -131,9 +136,41 @@ update.busId = 1;                                // Bus identifier where measure
 update.timestamp = getCurrentTimestamp();        // Unix timestamp in milliseconds
                                                  // Used for temporal ordering and stale data detection
 
-// Update the measurement in real-time
+// Update a single measurement in real-time
 // This updates the existing measurement if deviceId matches, or adds a new measurement
 processor.updateMeasurement(update);
+
+// Batch update multiple measurements efficiently
+// updates: Vector of TelemetryUpdate structures to process
+//          More efficient than calling updateMeasurement() multiple times
+//          All updates are processed sequentially in a single call
+//          Useful for processing multiple SCADA/PMU updates at once
+std::vector<sle::interface::TelemetryUpdate> updates;
+updates.push_back(update);  // Add first update
+
+// Add more updates
+sle::interface::TelemetryUpdate update2;
+update2.deviceId = "VT_001";
+update2.type = sle::MeasurementType::V_MAGNITUDE;
+update2.value = 1.05;
+update2.stdDev = 0.005;
+update2.busId = 1;
+update2.timestamp = getCurrentTimestamp();
+updates.push_back(update2);
+
+// Process all updates in batch
+processor.updateMeasurements(updates);
+
+// Alternative: Update measurements directly via TelemetryData
+// deviceId: Device identifier (must match existing measurement)
+// value: New measurement value
+// stdDev: New standard deviation
+// timestamp: Optional timestamp (default: -1, uses current time)
+// Returns: true if measurement was found and updated, false otherwise
+bool updated = telemetry->updateMeasurement("METER_001", 1.6, 0.01, getCurrentTimestamp());
+if (updated) {
+    std::cout << "Measurement updated successfully\n";
+}
 
 // Run incremental state estimation (faster than full estimation)
 // Uses the previous state estimate as initial guess, reducing iterations needed

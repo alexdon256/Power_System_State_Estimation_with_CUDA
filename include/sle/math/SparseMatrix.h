@@ -9,13 +9,8 @@
 
 #include <sle/Types.h>
 #include <vector>
-
-#ifdef USE_CUDA
 #include <cuda_runtime.h>
 #include <cusparse.h>
-#else
-using cusparseHandle_t = void*;
-#endif
 
 namespace sle {
 namespace math {
@@ -51,10 +46,14 @@ public:
     Index getNNZ() const { return nnz_; }
     
     // Matrix-vector product: y = A * x
-    void multiplyVector(const Real* x, Real* y, cusparseHandle_t handle) const;
+    // Optional buffer: If provided, reuses existing buffer (avoids allocation)
+    void multiplyVector(const Real* x, Real* y, cusparseHandle_t handle, 
+                       void* dBuffer = nullptr, size_t* bufferSize = nullptr) const;
     
     // Matrix transpose-vector product: y = A^T * x
-    void multiplyVectorTranspose(const Real* x, Real* y, cusparseHandle_t handle) const;
+    // Optional buffer: If provided, reuses existing buffer (avoids allocation)
+    void multiplyVectorTranspose(const Real* x, Real* y, cusparseHandle_t handle,
+                                void* dBuffer = nullptr, size_t* bufferSize = nullptr) const;
     
     void clear();
     
@@ -66,8 +65,18 @@ private:
     Index nCols_;
     Index nnz_;
     
+    // OPTIMIZATION: Cached cuSPARSE descriptors (for new API >= 11.0)
+    // These are created once and reused, avoiding per-call overhead
+#if CUSPARSE_VERSION >= 11000
+    mutable cusparseSpMatDescr_t cachedSpMatDescr_ = nullptr;
+    mutable size_t cachedSpMVBufferSize_ = 0;
+    mutable void* cachedSpMVBuffer_ = nullptr;
+#endif
+    
     void allocateDeviceMemory();
     void freeDeviceMemory();
+    void ensureSpMVBuffer(size_t requiredSize) const;
+    void freeCachedDescriptors() const;
 };
 
 } // namespace math

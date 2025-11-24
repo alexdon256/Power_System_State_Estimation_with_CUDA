@@ -37,10 +37,11 @@ void buildDeviceBranches(const model::NetworkModel& network,
     size_t nBuses = network.getBusCount();
     size_t nBranches = network.getBranchCount();
     deviceBranches.clear();
-    deviceBranches.reserve(nBranches);
     
     auto branches = network.getBranches();
     for (const auto* branch : branches) {
+        if (!branch->isOn()) continue; // Skip offline branches
+        
         DeviceBranch db;
         Index fromIdx = network.getBusIndex(branch->getFromBus());
         Index toIdx = network.getBusIndex(branch->getToBus());

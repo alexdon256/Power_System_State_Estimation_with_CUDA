@@ -10,12 +10,7 @@
 #define SLE_CUDA_CUDAREDUCTION_H
 
 #include <sle/Types.h>
-
-#ifdef USE_CUDA
 #include <cuda_runtime.h>
-#else
-using cudaStream_t = void*;
-#endif
 
 namespace sle {
 namespace cuda {

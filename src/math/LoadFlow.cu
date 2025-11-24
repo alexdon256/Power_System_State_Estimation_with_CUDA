@@ -19,14 +19,14 @@
 namespace sle {
 namespace math {
 
-LoadFlow::LoadFlow() {
+LoadFlow::LoadFlow() : solver_(std::make_unique<Solver>()) {
     // Default config
     config_.tolerance = 1e-6;
     config_.maxIterations = 50;
     config_.useGPU = true;
 }
 
-LoadFlow::LoadFlow(const LoadFlowConfig& config) : config_(config) {
+LoadFlow::LoadFlow(const LoadFlowConfig& config) : config_(config), solver_(std::make_unique<Solver>()) {
 }
 
 LoadFlowResult LoadFlow::solve(const model::NetworkModel& network) {
@@ -105,13 +105,16 @@ LoadFlowResult LoadFlow::solve(const model::NetworkModel& network, const model::
     solverConfig.useGPU = config_.useGPU;
     // No regularization for pure Newton-Raphson simulation
     
-    // Run Solver
-    Solver solver(solverConfig);
+    // Run Solver (reusing persistent instance)
+    if (!solver_) {
+        solver_ = std::make_unique<Solver>();
+    }
+    solver_->setConfig(solverConfig);
     
     // Initialize state
     model::StateVector state = initialState;
     
-    SolverResult solverResult = solver.solve(state, network, telemetry);
+    SolverResult solverResult = solver_->solve(state, network, telemetry);
     
     LoadFlowResult result;
     result.converged = solverResult.converged;
@@ -127,13 +130,6 @@ LoadFlowResult LoadFlow::solve(const model::NetworkModel& network, const model::
     }
     
     // Compute actual mismatches for report
-    computeMismatches(network, state, result.busMismatches, result.busMismatches); 
-    // Note: The above line is buggy in original signature (2 vectors output), 
-    // but LoadFlowResult has only one vector 'busMismatches' which seems to be combined?
-    // Let's check struct definition. 
-    // struct LoadFlowResult { std::vector<Real> busMismatches; ... }
-    // We should compute P and Q mismatches and store them.
-    
     std::vector<Real> pMis, qMis;
     computeMismatches(network, state, pMis, qMis);
     result.busMismatches.clear();
@@ -207,13 +203,8 @@ LoadFlowResult LoadFlow::solveFastDecoupled(const model::NetworkModel* network,
     return solveNewtonRaphson(network, initialState);
 }
 
-void LoadFlow::buildPowerFlowJacobian(const model::NetworkModel& network, const model::StateVector& state,
-                                     std::vector<Complex>& J,
-                                     std::vector<Index>& rowPtr,
-                                     std::vector<Index>& colInd) const {
-    // Unused in new architecture relying on Solver
-}
-
 } // namespace math
 } // namespace sle
+
+
 

@@ -6,7 +6,6 @@
 
 #include <sle/math/Solver.h>
 #include <sle/math/SparseMatrix.h>
-#include <sle/math/CuSOLVERIntegration.h>
 #include <sle/model/NetworkModel.h>
 #include <sle/model/StateVector.h>
 #include <sle/model/TelemetryData.h>
@@ -14,7 +13,6 @@
 #include <sle/cuda/CudaSparseOps.h>
 #include <sle/cuda/CudaDataManager.h>
 #include <sle/cuda/CudaPowerFlow.h>
-// #include <sle/cuda/UnifiedCudaMemoryPool.h> // Removed
 #include <sle/math/JacobianMatrix.h>
 #include <cusparse.h>
 #include <cusolverSp.h>
@@ -41,7 +39,7 @@ Solver::Solver()
     : jacobian_(std::make_unique<JacobianMatrix>()),
       measFuncs_(std::make_unique<MeasurementFunctions>()),
       sharedDataManager_(std::make_unique<cuda::CudaDataManager>()),
-      cusolver_(std::make_unique<CuSOLVERIntegration>()) {
+      cusolverHandle_(nullptr), cusparseDescr_(nullptr) {
     // Share CudaDataManager with MeasurementFunctions
     measFuncs_->setDataManager(sharedDataManager_.get());
     
@@ -49,12 +47,16 @@ Solver::Solver()
     CUDA_CHECK_THROW(cudaStreamCreate(&computeStream_));
     CUDA_CHECK_THROW(cudaStreamCreate(&transferStream_));
     
-    // Initialize persistent handles
+    // Initialize persistent handles (merged from CuSOLVERIntegration)
     cusparseCreate(&cusparseHandle_);
     cusparseSetStream(cusparseHandle_, computeStream_);
     
-    cusolver_->initialize();
-    cusolver_->setStream(computeStream_);
+    cusolverSpCreate(&cusolverHandle_);
+    cusolverSpSetStream(cusolverHandle_, computeStream_);
+    
+    cusparseCreateMatDescr(&cusparseDescr_);
+    cusparseSetMatType(cusparseDescr_, CUSPARSE_MATRIX_TYPE_GENERAL);
+    cusparseSetMatIndexBase(cusparseDescr_, CUSPARSE_INDEX_BASE_ZERO);
 }
 
 Solver::~Solver() {
@@ -63,15 +65,15 @@ Solver::~Solver() {
     if (h_pinned_weights_) cudaFreeHost(h_pinned_weights_);
     if (h_pinned_state_) cudaFreeHost(h_pinned_state_);
     
-    // Destroy handles
+    // Destroy handles (merged from CuSOLVERIntegration)
     if (cusparseHandle_) cusparseDestroy(cusparseHandle_);
+    if (cusolverHandle_) cusolverSpDestroy(cusolverHandle_);
+    if (cusparseDescr_) cusparseDestroyMatDescr(cusparseDescr_);
     
-    // Destroy CUDA streams if initialized
-    // Streams are always initialized
+    // Destroy CUDA streams
         if (computeStream_) cudaStreamDestroy(computeStream_);
         if (transferStream_) cudaStreamDestroy(transferStream_);
     }
-}
 
 SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
                          const TelemetryData& telemetry, bool reuseStructure) {
@@ -97,12 +99,14 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
         }
         weights = weightsOverride;
     } else {
-        telemetry.getWeightMatrix(weights);
+    telemetry.getWeightMatrix(weights);
     }
     
     size_t nMeas = z.size();
     size_t nBuses = network.getBusCount();
     size_t nStates = 2 * nBuses;
+    
+    lastNMeas_ = static_cast<Index>(nMeas);
     
     if (nMeas == 0) {
         result.message = "No measurements provided";
@@ -166,7 +170,7 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     }
     
     if (!reuseStructure) {
-        jacobian_->buildStructure(network, telemetry);
+    jacobian_->buildStructure(network, telemetry);
     }
     
     Real norm = 0.0;
@@ -198,11 +202,28 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
         // Use persistent gainMatrix_ to avoid re-allocation
         computeGainMatrixGPU(*jacobian_, memoryPool_.d_weights, gainMatrix_, cusparseHandle_);
         
-        cudaMemset(memoryPool_.d_rhs, 0, nStates * sizeof(Real));
+        // OPTIMIZATION: Use async memset with compute stream for better overlap
+        cudaMemsetAsync(memoryPool_.d_rhs, 0, nStates * sizeof(Real), stream);
         
         const SparseMatrix& HMat = jacobian_->getMatrix();
         if (HMat.getNNZ() > 0) {
-            HMat.multiplyVectorTranspose(memoryPool_.d_weightedResidual, memoryPool_.d_rhs, cusparseHandle_);
+            // OPTIMIZATION: Use pooled SpMV buffer to avoid per-call allocation
+            size_t spmvBufferSize = memoryPool_.spmvBufferSize;
+            HMat.multiplyVectorTranspose(memoryPool_.d_weightedResidual, memoryPool_.d_rhs, cusparseHandle_,
+                                        memoryPool_.d_spmvBuffer, &spmvBufferSize);
+            // Update pool size if buffer was resized
+            if (spmvBufferSize > memoryPool_.spmvBufferSize) {
+                if (memoryPool_.d_spmvBuffer) {
+                    cudaFree(memoryPool_.d_spmvBuffer);
+        }
+                cudaError_t err = cudaMalloc(&memoryPool_.d_spmvBuffer, spmvBufferSize);
+                if (err == cudaSuccess) {
+                    memoryPool_.spmvBufferSize = spmvBufferSize;
+                } else {
+                    memoryPool_.d_spmvBuffer = nullptr;
+                    memoryPool_.spmvBufferSize = 0;
+                }
+            }
         }
         
         solveLinearSystemGPU(gainMatrix_, memoryPool_.d_rhs, memoryPool_.d_deltaX, nStates);
@@ -285,6 +306,17 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     state.updateFromStateVector();
     
     return result;
+}
+
+void Solver::getLastResiduals(std::vector<Real>& residuals) const {
+    if (!memoryPool_.d_residual || lastNMeas_ == 0) {
+        residuals.clear();
+        return;
+    }
+    
+    residuals.resize(lastNMeas_);
+    // Use transfer stream for consistency, though this is likely a blocking call
+    cudaMemcpy(residuals.data(), memoryPool_.d_residual, lastNMeas_ * sizeof(Real), cudaMemcpyDeviceToHost);
 }
 
 void Solver::storeComputedValues(model::StateVector& state, model::NetworkModel& network) {
@@ -471,10 +503,10 @@ void Solver::computeGainMatrixGPU(const JacobianMatrix& H,
         G_colInd = G.getColInd();
         G_nnz = G.getNNZ();
     } else {
-        // Allocate row pointer array (SparseMatrix will take ownership)
-        cudaError_t err = cudaMalloc(&G_rowPtr, (nStates + 1) * sizeof(Index));
-        if (err != cudaSuccess) {
-            throw std::runtime_error("Failed to allocate GPU memory for gain matrix row pointers");
+    // Allocate row pointer array (SparseMatrix will take ownership)
+    cudaError_t err = cudaMalloc(&G_rowPtr, (nStates + 1) * sizeof(Index));
+    if (err != cudaSuccess) {
+        throw std::runtime_error("Failed to allocate GPU memory for gain matrix row pointers");
         }
     }
     
@@ -488,52 +520,68 @@ void Solver::computeGainMatrixGPU(const JacobianMatrix& H,
     // If direct method fails, try SpGEMM
     if (!success || G_nnz == 0) {
         if (!reuse) {
-            if (G_rowPtr) cudaFree(G_rowPtr);
-            if (G_values) cudaFree(G_values);
-            if (G_colInd) cudaFree(G_colInd);
-            
-            // Reallocate row pointer for SpGEMM
+        if (G_rowPtr) cudaFree(G_rowPtr);
+        if (G_values) cudaFree(G_values);
+        if (G_colInd) cudaFree(G_colInd);
+        
+        // Reallocate row pointer for SpGEMM
             cudaError_t err = cudaMalloc(&G_rowPtr, (nStates + 1) * sizeof(Index));
             if (err != cudaSuccess) {
                  throw std::runtime_error("Failed to allocate GPU memory for gain matrix row pointers");
             }
         }
         
-        // OPTIMIZATION: Use pooled WH_values buffer to avoid per-iteration allocation
-        success = sle::cuda::computeGainMatrixGPU(cusparseHandle,
-                                                  H_values, H_rowPtr, H_colInd,
-                                                  d_weights,
-                                                  G_values, G_rowPtr, G_colInd,
-                                                  nMeas, nStates, G_nnz,
-                                                  memoryPool_.d_WH_values, memoryPool_.WH_valuesSize);
+        // OPTIMIZATION: Use pooled WH_values buffer and pooled SpGEMM workspace to avoid per-iteration allocation
+            success = sle::cuda::computeGainMatrixGPU(cusparseHandle,
+                                                      H_values, H_rowPtr, H_colInd,
+                                                      d_weights,
+                                                      G_values, G_rowPtr, G_colInd,
+                                                      nMeas, nStates, G_nnz,
+                                                  memoryPool_.d_WH_values, memoryPool_.WH_valuesSize,
+                                                  memoryPool_.d_spgemmBuffer1, memoryPool_.spgemmBuffer1Size,
+                                                  memoryPool_.d_spgemmBuffer2, memoryPool_.spgemmBuffer2Size);
     }
     
     if (!success || G_nnz == 0) {
         if (!reuse) {
-            if (G_rowPtr) cudaFree(G_rowPtr);
-            if (G_values) cudaFree(G_values);
-            if (G_colInd) cudaFree(G_colInd);
+        if (G_rowPtr) cudaFree(G_rowPtr);
+        if (G_values) cudaFree(G_values);
+        if (G_colInd) cudaFree(G_colInd);
         }
         throw std::runtime_error("GPU gain matrix computation failed - CUDA-exclusive, no CPU fallback");
     }
     
     // Only buildFromDevicePointers if NOT reusing (to avoid double ownership/clear issues)
     if (!reuse) {
-        // Build SparseMatrix directly from device pointers (avoids host-device copy)
-        // SparseMatrix takes ownership of the device memory
-        G.buildFromDevicePointers(G_values, G_rowPtr, G_colInd, nStates, nStates, G_nnz);
+    // Build SparseMatrix directly from device pointers (avoids host-device copy)
+    // SparseMatrix takes ownership of the device memory
+    G.buildFromDevicePointers(G_values, G_rowPtr, G_colInd, nStates, nStates, G_nnz);
     }
 }
 
 
 void Solver::solveLinearSystemGPU(const SparseMatrix& G, Real* d_rhs, Real* d_deltaX, Index nStates) {
     // CUDA-EXCLUSIVE: Solve G * Δx = rhs entirely on GPU using cuSOLVER
+    // Merged from CuSOLVERIntegration::solveSparseGPU
     
-    // Solve directly on GPU without host transfers
-    if (!cusolver_->solveSparseGPU(G, d_rhs, d_deltaX, nStates)) {
+    if (G.getNNZ() == 0 || nStates == 0) {
+        cudaMemsetAsync(d_deltaX, 0, nStates * sizeof(Real), computeStream_);
+        return;
+    }
+    
+    // Solve using cuSOLVER QR factorization (all data on GPU)
+    int singularity = 0;
+    double tol = 1e-6;
+    int reorder = 0;
+    
+    cusolverStatus_t status = cusolverSpDcsrlsvqr(
+        cusolverHandle_, nStates, G.getNNZ(), cusparseDescr_,
+        G.getValues(), G.getRowPtr(), G.getColInd(),
+        d_rhs, tol, reorder, d_deltaX, &singularity);
+    
+    if (status != CUSOLVER_STATUS_SUCCESS || singularity != -1) {
         // If solve fails, zero out deltaX (should not happen in normal operation)
-    cudaStream_t stream = computeStream_;
-        cudaMemsetAsync(d_deltaX, 0, nStates * sizeof(Real), stream ? stream : 0);
+        cudaMemsetAsync(d_deltaX, 0, nStates * sizeof(Real), computeStream_);
     }
 }
 

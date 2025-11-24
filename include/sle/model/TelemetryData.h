@@ -9,6 +9,7 @@
 
 #include <sle/Types.h>
 #include <sle/model/MeasurementModel.h>
+#include <sle/model/MeasurementDevice.h>
 #include <vector>
 #include <memory>
 #include <string>
@@ -53,12 +54,24 @@ public:
     // Get weight matrix R⁻¹ (diagonal)
     void getWeightMatrix(std::vector<Real>& weights) const;
     
+    // Measurement device management
+    void addDevice(std::unique_ptr<MeasurementDevice> device);
+    MeasurementDevice* getDevice(const DeviceId& deviceId);
+    const MeasurementDevice* getDevice(const DeviceId& deviceId) const;
+    std::vector<const MeasurementDevice*> getDevices() const;
+    std::vector<const MeasurementDevice*> getDevicesByBus(BusId busId) const;
+    std::vector<const MeasurementDevice*> getDevicesByBranch(BusId fromBus, BusId toBus) const;
+    
     void clear();
     
 private:
     
     std::vector<std::unique_ptr<MeasurementModel>> measurements_;
     std::unordered_map<std::string, size_t> deviceIdIndex_;  // Device ID -> index mapping for O(1) lookup
+    
+    // Measurement devices (multimeters, voltmeters, etc.)
+    std::vector<std::unique_ptr<MeasurementDevice>> devices_;
+    std::unordered_map<std::string, size_t> deviceIndex_;  // Device ID -> device index mapping
 };
 
 } // namespace model

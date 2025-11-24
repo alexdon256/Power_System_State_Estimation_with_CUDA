@@ -10,16 +10,9 @@
 #define SLE_CUDA_CUDAUTILS_H
 
 #include <sle/Types.h>
-#include <string>
-
-#ifdef USE_CUDA
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
-#else
-using cudaError_t = int;
-#define cudaSuccess 0
-inline const char* cudaGetErrorString(cudaError_t) { return "CUDA disabled"; }
-#endif
+#include <string>
 
 namespace sle {
 namespace cuda {
@@ -191,6 +184,9 @@ inline bool allocateBuffer(T*& ptr, size_t& currentSize, size_t requiredSize) {
                                      requiredSize * sizeof(T));
         if (err == cudaSuccess) {
             currentSize = requiredSize;
+            // IMPORTANT: Initialize newly allocated memory to zero to prevent reading garbage
+            // This is critical for buffers like partial reduction or output vectors
+            cudaMemset(ptr, 0, requiredSize * sizeof(T));
             return true;
         } else {
             ptr = nullptr;

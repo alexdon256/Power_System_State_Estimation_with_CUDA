@@ -21,13 +21,20 @@ StateEstimator::StateEstimator()
     : solver_(std::make_unique<math::Solver>()),
       modelUpdated_(true), telemetryUpdated_(true) {
     telemetryProcessor_.setTelemetryData(telemetry_.get());
+    
+    // Set topology change callback
+    telemetryProcessor_.setTopologyChangeCallback([this]() {
+        markModelUpdated();
+    });
 }
 
 StateEstimator::~StateEstimator() = default;
 
 void StateEstimator::setNetwork(std::shared_ptr<model::NetworkModel> network) {
     network_ = network;
-    modelUpdated_.store(true);
+    // Pass network to telemetry processor
+    telemetryProcessor_.setNetworkModel(network_.get());
+    markModelUpdated();
     
     // Reinitialize state if needed
     if (!currentState_ || currentState_->size() != network_->getBusCount()) {
@@ -73,9 +80,14 @@ baddata::BadDataResult StateEstimator::detectBadData() {
     
     // Perform bad data detection using the solver's measurement functions
     // This reuses the GPU data (topology, state) from the last estimation
+    // OPTIMIZATION: Pass residuals from last solve to avoid re-calculation
+    std::vector<Real> residuals;
+    solver_->getLastResiduals(residuals);
+    
     baddata::BadDataDetector detector;
     result = detector.detectBadData(*telemetry_, *currentState_, *network_, 
-                                   &solver_->getMeasurementFunctions());
+                                   &solver_->getMeasurementFunctions(),
+                                   residuals.empty() ? nullptr : &residuals);
     
     return result;
 }

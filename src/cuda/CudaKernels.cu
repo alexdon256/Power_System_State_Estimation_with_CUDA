@@ -329,7 +329,7 @@ __global__ void evaluateMeasurementsKernel(
                     }
                 }
                 break;
-
+                
             case 6:  // V_ANGLE
                 if (location >= 0) {
                     value = theta[location];

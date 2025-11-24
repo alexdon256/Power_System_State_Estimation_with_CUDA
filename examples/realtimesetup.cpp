@@ -83,7 +83,20 @@ int main(int argc, char* argv[]) {
             std::cerr << "ERROR: Failed to load telemetry data\n";
             return 1;
         }
-        std::cout << "  - Loaded " << telemetry->getMeasurementCount() << " measurements\n\n";
+        std::cout << "  - Loaded " << telemetry->getMeasurementCount() << " measurements\n";
+        
+        // Optionally load devices from separate file
+        std::string deviceFile = (argc > 3) ? argv[3] : "";
+        if (!deviceFile.empty()) {
+            std::cout << "Loading devices from: " << deviceFile << "\n";
+            try {
+                sle::interface::MeasurementLoader::loadDevices(deviceFile, *telemetry, *network);
+                std::cout << "  - Loaded " << telemetry->getDevices().size() << " devices\n";
+            } catch (const std::exception& e) {
+                std::cerr << "  Warning: Failed to load devices: " << e.what() << "\n";
+            }
+        }
+        std::cout << "\n";
         auto telemetryShared = std::shared_ptr<sle::model::TelemetryData>(std::move(telemetry));
         
         // ========================================================================

@@ -5,6 +5,8 @@
  */
 
 #include <sle/model/TelemetryData.h>
+#include <sle/model/MeasurementDevice.h>
+#include <algorithm>
 
 namespace sle {
 namespace model {
@@ -19,6 +21,12 @@ void TelemetryData::addMeasurement(std::unique_ptr<MeasurementModel> measurement
     if (!deviceId.empty()) {
         // Update device ID index
         deviceIdIndex_[deviceId] = measurements_.size();
+        
+        // Link measurement to device if device exists
+        auto deviceIt = deviceIndex_.find(deviceId);
+        if (deviceIt != deviceIndex_.end() && deviceIt->second < devices_.size()) {
+            devices_[deviceIt->second]->addMeasurement(measurement.get());
+        }
     }
     measurements_.push_back(std::move(measurement));
 }
@@ -126,9 +134,90 @@ bool TelemetryData::updateMeasurement(const std::string& deviceId, Real value, R
 }
 
 
+void TelemetryData::addDevice(std::unique_ptr<MeasurementDevice> device) {
+    if (!device) return;
+    
+    const std::string& deviceId = device->getId();
+    if (deviceId.empty()) return;
+    
+    auto it = deviceIndex_.find(deviceId);
+    if (it != deviceIndex_.end()) {
+        // Device already exists, update it
+        devices_[it->second] = std::move(device);
+        return;
+    }
+    
+    deviceIndex_[deviceId] = devices_.size();
+    devices_.push_back(std::move(device));
+    
+    // Link existing measurements to this device
+    for (auto& measurement : measurements_) {
+        if (measurement->getDeviceId() == deviceId) {
+            devices_.back()->addMeasurement(measurement.get());
+        }
+    }
+}
+
+MeasurementDevice* TelemetryData::getDevice(const DeviceId& deviceId) {
+    if (deviceId.empty()) return nullptr;
+    
+    auto it = deviceIndex_.find(deviceId);
+    if (it != deviceIndex_.end() && it->second < devices_.size()) {
+        return devices_[it->second].get();
+    }
+    return nullptr;
+}
+
+const MeasurementDevice* TelemetryData::getDevice(const DeviceId& deviceId) const {
+    if (deviceId.empty()) return nullptr;
+    
+    auto it = deviceIndex_.find(deviceId);
+    if (it != deviceIndex_.end() && it->second < devices_.size()) {
+        return devices_[it->second].get();
+    }
+    return nullptr;
+}
+
+std::vector<const MeasurementDevice*> TelemetryData::getDevices() const {
+    std::vector<const MeasurementDevice*> result;
+    result.reserve(devices_.size());
+    for (const auto& device : devices_) {
+        result.push_back(device.get());
+    }
+    return result;
+}
+
+std::vector<const MeasurementDevice*> TelemetryData::getDevicesByBus(BusId busId) const {
+    std::vector<const MeasurementDevice*> result;
+    for (const auto& device : devices_) {
+        // Check if it's a voltmeter on this bus
+        const Voltmeter* voltmeter = dynamic_cast<const Voltmeter*>(device.get());
+        if (voltmeter && voltmeter->getBusId() == busId) {
+            result.push_back(device.get());
+        }
+    }
+    return result;
+}
+
+std::vector<const MeasurementDevice*> TelemetryData::getDevicesByBranch(BusId fromBus, BusId toBus) const {
+    std::vector<const MeasurementDevice*> result;
+    for (const auto& device : devices_) {
+        // Check if it's a multimeter on this branch
+        const Multimeter* multimeter = dynamic_cast<const Multimeter*>(device.get());
+        if (multimeter && 
+            ((multimeter->getFromBus() == fromBus && multimeter->getToBus() == toBus) ||
+             (multimeter->getFromBus() == toBus && multimeter->getToBus() == fromBus))) {
+            result.push_back(device.get());
+        }
+    }
+    return result;
+}
+
 void TelemetryData::clear() {
     measurements_.clear();
     deviceIdIndex_.clear();
+    devices_.clear();
+    deviceIndex_.clear();
 }
 
 } // namespace model

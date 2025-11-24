@@ -69,7 +69,20 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         auto telemetry = std::shared_ptr<sle::model::TelemetryData>(std::move(telemetryUnique));
-        std::cout << "  - Loaded " << telemetry->getMeasurementCount() << " measurements\n\n";
+        std::cout << "  - Loaded " << telemetry->getMeasurementCount() << " measurements\n";
+        
+        // Optionally load devices from separate file
+        std::string deviceFile = (argc > 3) ? argv[3] : "";
+        if (!deviceFile.empty()) {
+            std::cout << "Loading devices from: " << deviceFile << "\n";
+            try {
+                sle::interface::MeasurementLoader::loadDevices(deviceFile, *telemetry, *network);
+                std::cout << "  - Loaded " << telemetry->getDevices().size() << " devices\n";
+            } catch (const std::exception& e) {
+                std::cerr << "  Warning: Failed to load devices: " << e.what() << "\n";
+            }
+        }
+        std::cout << "\n";
         
         // ========================================================================
         // STEP 2: Observability Analysis

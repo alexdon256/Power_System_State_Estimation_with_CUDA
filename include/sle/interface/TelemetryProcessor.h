@@ -15,8 +15,15 @@
 #include <memory>
 #include <vector>
 
+#include <functional>
+
 namespace sle {
 namespace interface {
+
+// Forward declaration
+namespace model {
+    class NetworkModel;
+}
 
 // Real-time telemetry update
 struct SLE_API TelemetryUpdate {
@@ -37,6 +44,8 @@ public:
     
     // Set telemetry data container
     void setTelemetryData(model::TelemetryData* telemetry);
+    void setNetworkModel(model::NetworkModel* network);
+    void setTopologyChangeCallback(std::function<void()> callback);
     
     // Add/update measurement in real-time
     void updateMeasurement(const TelemetryUpdate& update);
@@ -51,6 +60,8 @@ public:
     
 private:
     model::TelemetryData* telemetry_;
+    model::NetworkModel* network_;
+    std::function<void()> onTopologyChange_;
     int64_t latestTimestamp_;
     
     void applyUpdate(const TelemetryUpdate& update);
