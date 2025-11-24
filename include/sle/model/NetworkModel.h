@@ -96,9 +96,8 @@ public:
     
 private:
 #ifdef USE_CUDA
-    // GPU memory pool for performance (reuse allocations)
-    struct CudaMemoryPool;
-    mutable std::unique_ptr<CudaMemoryPool> gpuMemoryPool_;
+    // Use unified memory pool instead of local pool (eliminates duplicate allocations)
+    bool useUnifiedPool_;  // Whether to use unified memory pool (default: true)
 #endif
     
 #ifdef USE_CUDA
@@ -128,6 +127,10 @@ private:
 #ifdef USE_CUDA
     void ensureGPUCapacity(size_t nBuses, size_t nBranches) const;
     void updateDeviceData() const;
+    
+    // Enable/disable unified memory pool (default: true for better memory utilization)
+    void setUseUnifiedPool(bool use) { useUnifiedPool_ = use; }
+    bool getUseUnifiedPool() const { return useUnifiedPool_; }
 #endif
     void updateAdjacencyLists() const;
     void invalidateCaches();

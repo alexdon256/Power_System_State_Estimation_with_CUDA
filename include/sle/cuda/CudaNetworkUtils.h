@@ -13,6 +13,10 @@
 #include <sle/cuda/CudaPowerFlow.h>
 #include <vector>
 
+#ifdef USE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 // Forward declarations
 namespace sle {
 namespace model {
@@ -31,12 +35,22 @@ void buildDeviceBuses(const model::NetworkModel& network,
 void buildDeviceBranches(const model::NetworkModel& network,
                         std::vector<DeviceBranch>& deviceBranches);
 
-// Build CSR format adjacency lists for GPU
+// Build CSR format adjacency lists for GPU (CPU version - for backward compatibility)
 void buildCSRAdjacencyLists(const model::NetworkModel& network,
                             std::vector<Index>& branchFromBus,
                             std::vector<Index>& branchFromBusRowPtr,
                             std::vector<Index>& branchToBus,
                             std::vector<Index>& branchToBusRowPtr);
+
+// GPU-accelerated CSR adjacency list building (eliminates CPU-GPU transfer)
+// Builds CSR format directly on GPU from DeviceBranch array
+// Returns true on success, false on failure
+bool buildCSRAdjacencyListsGPU(
+    const DeviceBranch* d_branches,
+    Index* d_branchFromBus, Index* d_branchToBus,
+    Index* d_branchFromBusRowPtr, Index* d_branchToBusRowPtr,
+    Index nBranches, Index nBuses,
+    cudaStream_t stream = nullptr);
 
 // Map MeasurementType enum to index (0-5)
 Index mapMeasurementTypeToIndex(MeasurementType type);

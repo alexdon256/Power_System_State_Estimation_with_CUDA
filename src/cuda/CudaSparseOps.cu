@@ -701,55 +701,5 @@ __global__ void updateGainMatrixIncrementalKernel(
     }
 }
 
-// OPTIMIZATION: Incremental gain matrix update
-// For systems with constant structure, only updates changed parts
-bool computeGainMatrixIncremental(cusparseHandle_t handle,
-                                  const Real* H_values, const Index* H_rowPtr, const Index* H_colInd,
-                                  const Real* weights,
-                                  const Index* H_changedRows, Index nChangedRows,
-                                  const Real* G_old_values, const Index* G_old_rowPtr, const Index* G_old_colInd,
-                                  Real* G_new_values, const Index* G_new_rowPtr, const Index* G_new_colInd,
-                                  Index nMeas, Index nStates, Index G_nnz) {
-    // Validate inputs
-    if (nMeas == 0 || nStates == 0 || G_nnz == 0) {
-        return false;
-    }
-    
-    // If all rows changed or no tracking, fall back to full recomputation
-    if (H_changedRows == nullptr || nChangedRows == 0 || nChangedRows >= nMeas) {
-        return false;  // Signal to caller to use full recomputation
-    }
-    
-    // Verify structure matches
-    bool structureMatches = true;
-    for (Index i = 0; i <= nStates; ++i) {
-        if (G_old_rowPtr[i] != G_new_rowPtr[i]) {
-            structureMatches = false;
-            break;
-        }
-    }
-    if (!structureMatches) {
-        return false;  // Structure changed, need full recomputation
-    }
-    
-    // Copy old values to new (will update incrementally)
-    cudaMemcpy(G_new_values, G_old_values, G_nnz * sizeof(Real), cudaMemcpyDeviceToDevice);
-    
-    // Launch kernel to update only changed contributions
-    constexpr Index blockSize = 256;
-    Index gridSize = (G_nnz + blockSize - 1) / blockSize;
-    
-    // Note: This is a simplified incremental update
-    // Full implementation would require tracking old H values to compute delta
-    // For now, this serves as a framework - actual implementation would need:
-    // 1. Storage for old H values
-    // 2. Delta computation: delta_G = H_new^T * W * H_new - H_old^T * W * H_old
-    // 3. Update: G_new = G_old + delta_G
-    
-    // For now, return false to indicate full recomputation is needed
-    // This function provides the interface for future optimization
-    return false;
-}
-
 } // namespace cuda
 } // namespace sle

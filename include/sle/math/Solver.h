@@ -12,6 +12,8 @@
 #include <sle/math/MeasurementFunctions.h>
 #include <sle/math/SparseMatrix.h>
 #include <sle/cuda/CudaDataManager.h>
+#include <sle/cuda/CudaUtils.h>
+#include <sle/cuda/UnifiedCudaMemoryPool.h>
 #include <memory>
 #include <vector>
 #include <string>
@@ -75,6 +77,10 @@ public:
     // instead of recomputing them, eliminating redundant GPU computations
     void storeComputedValues(model::StateVector& state, model::NetworkModel& network);
     
+    // Enable/disable unified memory pool (default: true for better memory utilization)
+    void setUseUnifiedPool(bool use) { useUnifiedPool_ = use; }
+    bool getUseUnifiedPool() const { return useUnifiedPool_; }
+    
 private:
     SolverConfig config_;
     std::unique_ptr<JacobianMatrix> jacobian_;
@@ -108,19 +114,25 @@ private:
         Real* d_x_old = nullptr;           // Previous state
         Real* d_x_new = nullptr;           // Updated state
         Real* d_partial = nullptr;         // Partial reduction buffer (for norms, weighted sums)
-        Real* d_pMW = nullptr;             // Pooled: MW values (computed on GPU)
-        Real* d_qMVAR = nullptr;           // Pooled: MVAR values (computed on GPU)
-        Real* d_iPU = nullptr;            // Pooled: Current in p.u. (computed on GPU)
-        Real* d_iAmps = nullptr;          // Pooled: Current in Amperes (computed on GPU)
+        Real* d_WH_values = nullptr;        // Pooled: W*H values for gain matrix computation
+        Real* d_pMW = nullptr;             // Pooled: MW values (computed on GPU) - may point to unified pool
+        Real* d_qMVAR = nullptr;           // Pooled: MVAR values (computed on GPU) - may point to unified pool
+        Real* d_iPU = nullptr;            // Pooled: Current in p.u. (computed on GPU) - may point to unified pool
+        Real* d_iAmps = nullptr;          // Pooled: Current in Amperes (computed on GPU) - may point to unified pool
         size_t residualSize = 0;
         size_t weightsSize = 0;
         size_t weightedResidualSize = 0;
         size_t rhsSize = 0;
         size_t zSize = 0;
-        size_t hxSize = 0;
+        size_t hxSize = 0;                  // May point to unified pool buffer
         size_t deltaXSize = 0;
         size_t stateSize = 0;
-        size_t partialSize = 0;            // Max grid size for partial reductions
+        size_t partialSize = 0;            // Max grid size for partial reductions - may point to unified pool
+        size_t WH_valuesSize = 0;          // Size of WH_values buffer
+        size_t pMWSize = 0;                // Size tracking for unified pool
+        size_t qMVARSize = 0;
+        size_t iPUSize = 0;
+        size_t iAmpsSize = 0;
         size_t derivedQuantitiesSize = 0;  // Size of pooled derived quantity buffers
         
         ~CudaMemoryPool() {
@@ -142,180 +154,74 @@ private:
         }
         
         void ensureCapacity(size_t nMeas, size_t nStates, size_t nBranches = 0) {
-            // Add error checking for cudaMalloc failures
-            cudaError_t err;
-            
             // Ensure partial reduction buffer (for max grid size)
             // This buffer is reused across iterations for norm computations
             constexpr size_t blockSize = 256;
-            size_t maxGridSize = (std::max(nMeas, nStates) + blockSize - 1) / blockSize;
-            if (partialSize < maxGridSize) {
-                if (d_partial) cudaFree(d_partial);
-                err = cudaMalloc(reinterpret_cast<void**>(&d_partial), maxGridSize * sizeof(Real));
-                if (err != cudaSuccess) {
-                    d_partial = nullptr;
-                    partialSize = 0;
-                } else {
-                    partialSize = maxGridSize;
-                }
+            size_t maxGridSize = KernelConfig<blockSize>::gridSize(std::max(nMeas, nStates));
+            cuda::ensureCapacity(d_partial, partialSize, maxGridSize);
+            
+            // Ensure measurement buffers (critical - return on failure)
+            if (!cuda::ensureCapacity(d_residual, residualSize, nMeas)) {
+                return;
             }
-            if (residualSize < nMeas) {
-                if (d_residual) cudaFree(d_residual);
-                err = cudaMalloc(reinterpret_cast<void**>(&d_residual), nMeas * sizeof(Real));
-                if (err != cudaSuccess) {
-                    d_residual = nullptr;
-                    residualSize = 0;
-                    return;
-                }
-                residualSize = nMeas;
+            if (!cuda::ensureCapacity(d_weights, weightsSize, nMeas)) {
+                return;
             }
-            if (weightsSize < nMeas) {
-                if (d_weights) cudaFree(d_weights);
-                err = cudaMalloc(reinterpret_cast<void**>(&d_weights), nMeas * sizeof(Real));
-                if (err != cudaSuccess) {
-                    d_weights = nullptr;
-                    weightsSize = 0;
-                    return;
-                }
-                weightsSize = nMeas;
+            if (!cuda::ensureCapacity(d_weightedResidual, weightedResidualSize, nMeas)) {
+                return;
             }
-            if (weightedResidualSize < nMeas) {
-                if (d_weightedResidual) cudaFree(d_weightedResidual);
-                err = cudaMalloc(reinterpret_cast<void**>(&d_weightedResidual), nMeas * sizeof(Real));
-                if (err != cudaSuccess) {
-                    d_weightedResidual = nullptr;
-                    weightedResidualSize = 0;
-                    return;
-                }
-                weightedResidualSize = nMeas;
+            
+            // Ensure state buffers
+            if (!cuda::ensureCapacity(d_rhs, rhsSize, nStates)) {
+                return;
             }
-            if (rhsSize < nStates) {
-                if (d_rhs) cudaFree(d_rhs);
-                err = cudaMalloc(reinterpret_cast<void**>(&d_rhs), nStates * sizeof(Real));
-                if (err != cudaSuccess) {
-                    d_rhs = nullptr;
-                    rhsSize = 0;
-                    return;
-                }
-                rhsSize = nStates;
+            cuda::ensureCapacity(d_z, zSize, nMeas);
+            // d_hx may be set from unified pool - don't allocate here if using unified pool
+            // This will be handled by Solver::solve() when useUnifiedPool_ is true
+            if (hxSize == 0) {
+                cuda::ensureCapacity(d_hx, hxSize, nMeas);
             }
-            if (zSize < nMeas) {
-                if (d_z) cudaFree(d_z);
-                err = cudaMalloc(reinterpret_cast<void**>(&d_z), nMeas * sizeof(Real));
-                if (err != cudaSuccess) {
-                    d_z = nullptr;
-                    zSize = 0;
-                } else {
-                    zSize = nMeas;
-                }
-            }
-            if (hxSize < nMeas) {
-                if (d_hx) cudaFree(d_hx);
-                err = cudaMalloc(reinterpret_cast<void**>(&d_hx), nMeas * sizeof(Real));
-                if (err != cudaSuccess) {
-                    d_hx = nullptr;
-                    hxSize = 0;
-                } else {
-                    hxSize = nMeas;
-                }
-            }
-            if (deltaXSize < nStates) {
-                if (d_deltaX) cudaFree(d_deltaX);
-                err = cudaMalloc(reinterpret_cast<void**>(&d_deltaX), nStates * sizeof(Real));
-                if (err != cudaSuccess) {
-                    d_deltaX = nullptr;
-                    deltaXSize = 0;
-                } else {
-                    deltaXSize = nStates;
-                }
-            }
+            cuda::ensureCapacity(d_deltaX, deltaXSize, nStates);
+            
+            // Ensure state vectors (allocate both together)
             if (stateSize < nStates) {
-                if (d_x_old) cudaFree(d_x_old);
-                if (d_x_new) cudaFree(d_x_new);
-                err = cudaMalloc(reinterpret_cast<void**>(&d_x_old), nStates * sizeof(Real));
-                if (err == cudaSuccess) {
-                    err = cudaMalloc(reinterpret_cast<void**>(&d_x_new), nStates * sizeof(Real));
-                    if (err != cudaSuccess) {
-                        cudaFree(d_x_old);
-                        d_x_old = nullptr;
-                        d_x_new = nullptr;
-                        stateSize = 0;
-                    } else {
-                        stateSize = nStates;
-                    }
+                cuda::freeBuffer(d_x_old, stateSize);
+                cuda::freeBuffer(d_x_new, stateSize);
+                if (cuda::allocateBuffer(d_x_old, stateSize, nStates) &&
+                    cuda::allocateBuffer(d_x_new, stateSize, nStates)) {
+                    stateSize = nStates;
                 } else {
-                    d_x_old = nullptr;
-                    d_x_new = nullptr;
+                    cuda::freeBuffer(d_x_old, stateSize);
+                    cuda::freeBuffer(d_x_new, stateSize);
                     stateSize = 0;
                 }
             }
+            
             // Ensure WH_values buffer for gain matrix computation (pooled to avoid per-iteration allocation)
-            // This buffer is used in computeGainMatrixGPU for W*H computation
             if (nMeas > 0) {
-                // Estimate max nnz (worst case: all measurements have all states)
-                // Conservative estimate: assume each measurement has at most nStates non-zeros
                 size_t maxH_nnz = nMeas * nStates;  // Conservative upper bound
-                if (WH_valuesSize < maxH_nnz) {
-                    if (d_WH_values) cudaFree(d_WH_values);
-                    err = cudaMalloc(reinterpret_cast<void**>(&d_WH_values), maxH_nnz * sizeof(Real));
-                    if (err != cudaSuccess) {
-                        d_WH_values = nullptr;
-                        WH_valuesSize = 0;
-                    } else {
-                        WH_valuesSize = maxH_nnz;
-                    }
-                }
+                cuda::ensureCapacity(d_WH_values, WH_valuesSize, maxH_nnz);
             }
             
             // Ensure derived quantity buffers (for power flow MW/MVAR/I_PU/I_Amps)
             if (nBranches > 0 && derivedQuantitiesSize < nBranches) {
-                if (d_pMW) cudaFree(d_pMW);
-                if (d_qMVAR) cudaFree(d_qMVAR);
-                if (d_iPU) cudaFree(d_iPU);
-                if (d_iAmps) cudaFree(d_iAmps);
+                // Free all if any allocation fails
+                cuda::freeBuffer(d_pMW, derivedQuantitiesSize);
+                cuda::freeBuffer(d_qMVAR, derivedQuantitiesSize);
+                cuda::freeBuffer(d_iPU, derivedQuantitiesSize);
+                cuda::freeBuffer(d_iAmps, derivedQuantitiesSize);
                 
-                err = cudaMalloc(reinterpret_cast<void**>(&d_pMW), nBranches * sizeof(Real));
-                if (err == cudaSuccess) {
-                    err = cudaMalloc(reinterpret_cast<void**>(&d_qMVAR), nBranches * sizeof(Real));
-                    if (err == cudaSuccess) {
-                        err = cudaMalloc(reinterpret_cast<void**>(&d_iPU), nBranches * sizeof(Real));
-                        if (err == cudaSuccess) {
-                            err = cudaMalloc(reinterpret_cast<void**>(&d_iAmps), nBranches * sizeof(Real));
-                            if (err == cudaSuccess) {
-                                derivedQuantitiesSize = nBranches;
-                            } else {
-                                // Free previously allocated buffers on failure
-                                cudaFree(d_pMW);
-                                cudaFree(d_qMVAR);
-                                cudaFree(d_iPU);
-                                d_pMW = nullptr;
-                                d_qMVAR = nullptr;
-                                d_iPU = nullptr;
-                                d_iAmps = nullptr;
-                                derivedQuantitiesSize = 0;
-                            }
-                        } else {
-                            cudaFree(d_pMW);
-                            cudaFree(d_qMVAR);
-                            d_pMW = nullptr;
-                            d_qMVAR = nullptr;
-                            d_iPU = nullptr;
-                            d_iAmps = nullptr;
-                            derivedQuantitiesSize = 0;
-                        }
-                    } else {
-                        cudaFree(d_pMW);
-                        d_pMW = nullptr;
-                        d_qMVAR = nullptr;
-                        d_iPU = nullptr;
-                        d_iAmps = nullptr;
-                        derivedQuantitiesSize = 0;
-                    }
+                if (cuda::allocateBuffer(d_pMW, derivedQuantitiesSize, nBranches) &&
+                    cuda::allocateBuffer(d_qMVAR, derivedQuantitiesSize, nBranches) &&
+                    cuda::allocateBuffer(d_iPU, derivedQuantitiesSize, nBranches) &&
+                    cuda::allocateBuffer(d_iAmps, derivedQuantitiesSize, nBranches)) {
+                    derivedQuantitiesSize = nBranches;
                 } else {
-                    d_pMW = nullptr;
-                    d_qMVAR = nullptr;
-                    d_iPU = nullptr;
-                    d_iAmps = nullptr;
+                    // Cleanup on failure
+                    cuda::freeBuffer(d_pMW, derivedQuantitiesSize);
+                    cuda::freeBuffer(d_qMVAR, derivedQuantitiesSize);
+                    cuda::freeBuffer(d_iPU, derivedQuantitiesSize);
+                    cuda::freeBuffer(d_iAmps, derivedQuantitiesSize);
                     derivedQuantitiesSize = 0;
                 }
             }

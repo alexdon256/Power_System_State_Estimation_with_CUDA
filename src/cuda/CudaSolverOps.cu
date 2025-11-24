@@ -9,6 +9,7 @@
 #include <cuda_runtime.h>
 #include <sle/Types.h>
 #include <sle/cuda/CudaReduction.h>
+#include <sle/cuda/CudaUtils.h>
 #include <cmath>
 
 namespace sle {
@@ -156,34 +157,25 @@ __global__ void normSquaredKernel(const Real* x, Real* partial, Index n) {
 
 // Wrapper functions
 void computeResidual(const Real* z, const Real* hx, Real* residual, Index n) {
-    constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
-    
-    computeResidualKernel<<<gridSize, blockSize>>>(z, hx, residual, n);
+    LAUNCH_KERNEL_1D(computeResidualKernel, n, nullptr, z, hx, residual, n);
 }
 
 // Fused: Compute residual and weighted residual in one kernel launch
 void computeResidualAndWeighted(const Real* z, const Real* hx, const Real* weights,
                                 Real* residual, Real* weightedResidual, Index n,
                                 cudaStream_t stream) {
-    constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
-    
     // OPTIMIZATION: Use stream for asynchronous execution and overlapping
-    computeResidualAndWeightedKernel<<<gridSize, blockSize, 0, stream>>>(
-        z, hx, weights, residual, weightedResidual, n);
+    LAUNCH_KERNEL_1D(computeResidualAndWeightedKernel, n, stream, 
+                     z, hx, weights, residual, weightedResidual, n);
 }
 
 void updateState(const Real* x_old, const Real* deltaX, Real* x_new, Real damping, Index n) {
-    constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
-    
-    updateStateKernel<<<gridSize, blockSize>>>(x_old, deltaX, x_new, damping, n);
+    LAUNCH_KERNEL_1D(updateStateKernel, n, nullptr, x_old, deltaX, x_new, damping, n);
 }
 
 Real computeNormSquared(const Real* x, Index n, cudaStream_t stream) {
     constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(n);
     
     if (gridSize == 0) return 0.0;
     
@@ -200,18 +192,17 @@ Real computeNormSquared(const Real* x, Index n, cudaStream_t stream) {
 
 Real computeNormSquared(const Real* x, Index n, Real* d_partial, size_t partialSize) {
     constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(n);
     
     if (gridSize == 0) return 0.0;
     if (static_cast<size_t>(gridSize) > partialSize) {
         return 0.0;  // Buffer too small
     }
     
-    constexpr Index warpsPerBlock = (blockSize + 32 - 1) / 32;
-    const Index sharedMemSize = warpsPerBlock * sizeof(Real);
+    const size_t sharedMemSize = KernelConfig<blockSize>::reductionSharedMemSize();
     
     // OPTIMIZATION: Use stream for asynchronous execution
-    normSquaredKernel<<<gridSize, blockSize, sharedMemSize, stream>>>(x, d_partial, n);
+    LAUNCH_KERNEL(normSquaredKernel, gridSize, blockSize, sharedMemSize, stream, x, d_partial, n);
     
     // OPTIMIZATION: Use GPU reduction instead of host-side reduction
     // Eliminates host-device transfer for small arrays
@@ -222,7 +213,7 @@ Real computeNormSquared(const Real* x, Index n, Real* d_partial, size_t partialS
 Real updateStateAndComputeNorm(const Real* x_old, const Real* deltaX, Real* x_new,
                               Real damping, Index n, cudaStream_t stream) {
     constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(n);
     
     if (gridSize == 0) return 0.0;
     
@@ -240,9 +231,10 @@ Real updateStateAndComputeNorm(const Real* x_old, const Real* deltaX, Real* x_ne
 }
 
 Real updateStateAndComputeNorm(const Real* x_old, const Real* deltaX, Real* x_new,
-                              Real damping, Index n, Real* d_partial, size_t partialSize) {
+                              Real damping, Index n, Real* d_partial, size_t partialSize,
+                              cudaStream_t stream) {
     constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(n);
     
     if (gridSize == 0) return 0.0;
     if (static_cast<size_t>(gridSize) > partialSize) {
@@ -251,12 +243,11 @@ Real updateStateAndComputeNorm(const Real* x_old, const Real* deltaX, Real* x_ne
         return 0.0;
     }
     
-    constexpr Index warpsPerBlock = (blockSize + 32 - 1) / 32;
-    const Index sharedMemSize = warpsPerBlock * sizeof(Real);
+    const size_t sharedMemSize = KernelConfig<blockSize>::reductionSharedMemSize();
     
     // OPTIMIZATION: Use stream for asynchronous execution
-    updateStateAndNormKernel<<<gridSize, blockSize, sharedMemSize, stream>>>(
-        x_old, deltaX, x_new, damping, d_partial, n);
+    LAUNCH_KERNEL(updateStateAndNormKernel, gridSize, blockSize, sharedMemSize, stream,
+                  x_old, deltaX, x_new, damping, d_partial, n);
     
     // OPTIMIZATION: Use GPU reduction instead of host-side reduction
     // Eliminates host-device transfer for small arrays
@@ -395,7 +386,7 @@ void computeWeightedResidual(const Real* residual, const Real* weights, Real* we
 
 Real computeWeightedSumSquares(const Real* x, const Real* w, Index n) {
     constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(n);
     
     if (gridSize == 0) return 0.0;
     
@@ -405,12 +396,10 @@ Real computeWeightedSumSquares(const Real* x, const Real* w, Index n) {
         return 0.0;  // Return 0 if allocation fails
     }
     
-    // Calculate shared memory size (one Real per warp)
-    constexpr Index warpsPerBlock = (blockSize + 32 - 1) / 32;
-    const Index sharedMemSize = warpsPerBlock * sizeof(Real);
+    const size_t sharedMemSize = KernelConfig<blockSize>::reductionSharedMemSize();
     
-    weightedSumSquaresKernel<<<gridSize, blockSize, sharedMemSize>>>(
-        x, w, d_partial, n);
+    LAUNCH_KERNEL(weightedSumSquaresKernel, gridSize, blockSize, sharedMemSize, nullptr,
+                  x, w, d_partial, n);
     
     // Final reduction on host (vectorized)
     std::vector<Real> h_partial(gridSize);
@@ -430,7 +419,7 @@ Real computeWeightedSumSquares(const Real* x, const Real* w, Index n) {
 Real computeResidualAndObjective(const Real* z, const Real* hx, const Real* weights,
                                  Real* residual, Index n) {
     constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(n);
     
     if (gridSize == 0) return 0.0;
     
@@ -440,27 +429,27 @@ Real computeResidualAndObjective(const Real* z, const Real* hx, const Real* weig
         return 0.0;
     }
     
-    Real result = computeResidualAndObjective(z, hx, weights, residual, n, d_partial, gridSize);
+    Real result = computeResidualAndObjective(z, hx, weights, residual, n, d_partial, gridSize, nullptr);
     cudaFree(d_partial);
     return result;
 }
 
 Real computeResidualAndObjective(const Real* z, const Real* hx, const Real* weights,
-                                 Real* residual, Index n, Real* d_partial, size_t partialSize) {
+                                 Real* residual, Index n, Real* d_partial, size_t partialSize,
+                                 cudaStream_t stream) {
     constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(n);
     
     if (gridSize == 0) return 0.0;
     if (static_cast<size_t>(gridSize) > partialSize) {
         return 0.0;  // Buffer too small
     }
     
-    constexpr Index warpsPerBlock = (blockSize + 32 - 1) / 32;
-    const Index sharedMemSize = warpsPerBlock * sizeof(Real);
+    const size_t sharedMemSize = KernelConfig<blockSize>::reductionSharedMemSize();
     
     // OPTIMIZATION: Use stream for asynchronous execution
-    computeResidualAndObjectiveKernel<<<gridSize, blockSize, sharedMemSize, stream>>>(
-        z, hx, weights, residual, d_partial, n);
+    LAUNCH_KERNEL(computeResidualAndObjectiveKernel, gridSize, blockSize, sharedMemSize, stream,
+                  z, hx, weights, residual, d_partial, n);
     
     // OPTIMIZATION: Use GPU reduction instead of host-side reduction
     // Eliminates host-device transfer for small arrays
@@ -468,10 +457,7 @@ Real computeResidualAndObjective(const Real* z, const Real* hx, const Real* weig
 }
 
 void weightedAccumulate(Real alpha, const Real* x, const Real* w, Real* y, Index n) {
-    constexpr Index blockSize = 256;
-    const Index gridSize = (n + blockSize - 1) / blockSize;
-    
-    weightedAccumulateKernel<<<gridSize, blockSize>>>(alpha, x, w, y, n);
+    LAUNCH_KERNEL_1D(weightedAccumulateKernel, n, nullptr, alpha, x, w, y, n);
     // Note: No cudaDeviceSynchronize() - caller should sync if needed
 }
 

@@ -60,22 +60,6 @@ bool computeGainMatrixDirect(cusparseHandle_t handle,
                              Real*& G_values, Index* G_rowPtr, Index*& G_colInd,
                              Index nMeas, Index nStates, Index& G_nnz);
 
-// OPTIMIZATION: Incremental gain matrix update for constant structure systems
-// Updates only the parts of G that changed due to changed H values
-// H_changedRows: list of row indices in H that changed (nullptr = all rows changed)
-// nChangedRows: number of changed rows (0 = all rows changed)
-// G_old: previous gain matrix (must have same structure as G)
-// G_new: output gain matrix (must have same structure as G_old)
-// Returns true on success, false on failure (falls back to full recomputation)
-// Note: For best performance, use when structure is constant and only values change
-bool computeGainMatrixIncremental(cusparseHandle_t handle,
-                                  const Real* H_values, const Index* H_rowPtr, const Index* H_colInd,
-                                  const Real* weights,
-                                  const Index* H_changedRows, Index nChangedRows,
-                                  const Real* G_old_values, const Index* G_old_rowPtr, const Index* G_old_colInd,
-                                  Real* G_new_values, const Index* G_new_rowPtr, const Index* G_new_colInd,
-                                  Index nMeas, Index nStates, Index G_nnz);
-
 // Dot product using cuBLAS
 Real dotProduct(cublasHandle_t cublasHandle, const Real* a, const Real* b, Index n);
 

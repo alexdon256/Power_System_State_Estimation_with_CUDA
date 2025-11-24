@@ -42,8 +42,10 @@ Real updateStateAndComputeNorm(const Real* x_old, const Real* deltaX, Real* x_ne
                                Real damping, Index n);
 
 // Fused: Update state and compute norm squared with pooled buffer (avoids allocation)
+// stream: Optional CUDA stream for asynchronous execution
 Real updateStateAndComputeNorm(const Real* x_old, const Real* deltaX, Real* x_new,
-                               Real damping, Index n, Real* d_partial, size_t partialSize);
+                               Real damping, Index n, Real* d_partial, size_t partialSize,
+                               cudaStream_t stream = nullptr);
 
 // ============================================================================
 // Weighted Operations (merged from CudaWeightedOps)
@@ -62,8 +64,10 @@ Real computeResidualAndObjective(const Real* z, const Real* hx, const Real* weig
                                  Real* residual, Index n);
 
 // Fused: Compute residual and objective value with pooled buffer (avoids allocation)
+// stream: Optional CUDA stream for asynchronous execution
 Real computeResidualAndObjective(const Real* z, const Real* hx, const Real* weights,
-                                 Real* residual, Index n, Real* d_partial, size_t partialSize);
+                                 Real* residual, Index n, Real* d_partial, size_t partialSize,
+                                 cudaStream_t stream = nullptr);
 
 // Weighted accumulate: y[i] = alpha * x[i] * w[i] + y[i]
 void weightedAccumulate(Real alpha, const Real* x, const Real* w, Real* y, Index n);

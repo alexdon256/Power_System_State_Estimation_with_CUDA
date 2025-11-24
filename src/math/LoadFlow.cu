@@ -14,6 +14,10 @@
 #include <algorithm>
 #include <complex>
 
+#ifdef USE_OPENMP
+#include <omp.h>
+#endif
+
 namespace sle {
 namespace math {
 
@@ -66,7 +70,11 @@ LoadFlowResult LoadFlow::solveNewtonRaphson(const NetworkModel* network,
         computeMismatches(net, state, pMismatch, qMismatch);
         
         // Check convergence
+        // OPTIMIZATION: OpenMP parallelization with reduction
         Real maxMismatch = 0.0;
+#ifdef USE_OPENMP
+        #pragma omp parallel for reduction(max:maxMismatch)
+#endif
         for (size_t i = 0; i < nBuses; ++i) {
             maxMismatch = std::max(maxMismatch, std::abs(pMismatch[i]));
             maxMismatch = std::max(maxMismatch, std::abs(qMismatch[i]));
@@ -94,9 +102,13 @@ LoadFlowResult LoadFlow::solveNewtonRaphson(const NetworkModel* network,
         const auto& angles = state.getAngles();
         const auto& magnitudes = state.getMagnitudes();
         
+        // OPTIMIZATION: OpenMP parallelization for independent loop
+        auto buses = net.getBuses();
+#ifdef USE_OPENMP
+        #pragma omp parallel for
+#endif
         for (size_t i = 0; i < nBuses; ++i) {
             // Get bus by index (simplified - would use proper bus ID mapping)
-        auto buses = net.getBuses();
             if (i < buses.size()) {
                 auto* bus = buses[i];
                 if (bus && bus->getType() != BusType::Slack) {
@@ -157,7 +169,11 @@ void LoadFlow::computeMismatches(const NetworkModel& network, const StateVector&
     
     // Compute mismatches: P_mismatch = P_gen - P_load - P_injection
     //                     Q_mismatch = Q_gen - Q_load - Q_injection
+    // OPTIMIZATION: OpenMP parallelization for independent loop
     auto buses = network.getBuses();
+#ifdef USE_OPENMP
+    #pragma omp parallel for
+#endif
     for (size_t i = 0; i < nBuses && i < buses.size(); ++i) {
         const Bus* bus = buses[i];
         if (!bus) {

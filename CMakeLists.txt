@@ -125,6 +125,8 @@ set(CUDA_SOURCES
     src/cuda/CudaSolverOps.cu
     src/cuda/CudaReduction.cu
     src/cuda/CudaKernels.cu
+    src/cuda/UnifiedCudaMemoryPool.cu
+    src/cuda/CudaNetworkKernels.cu
 )
 
 # Create library as shared (DLL)
@@ -136,6 +138,11 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE SLE_EXPORTS)
 # Define USE_CUDA macro for compile-time conditional compilation
 # This allows code to check if CUDA support is available at compile time
 target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUDA)
+
+# Verify CUDA is properly configured
+message(STATUS "CUDA enabled: YES")
+message(STATUS "CUDA architecture: ${CUDA_ARCH}")
+message(STATUS "CUDA toolkit version: ${CUDAToolkit_VERSION}")
 
 # Set include directories for the library
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -152,25 +159,50 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     CUDA::cusparse
 )
 
+# Thrust is header-only and included with CUDA toolkit
+# No linking required, but verify it's available
+find_path(THRUST_INCLUDE_DIR
+    NAMES thrust/version.h
+    PATHS
+        ${CUDAToolkit_INCLUDE_DIRS}
+        ${CUDA_TOOLKIT_ROOT_DIR}/include
+    NO_DEFAULT_PATH
+)
+if(THRUST_INCLUDE_DIR)
+    message(STATUS "Thrust found: ${THRUST_INCLUDE_DIR}")
+else()
+    message(WARNING "Thrust not found - CudaNetworkKernels.cu may fail to compile")
+    message(WARNING "Thrust should be included with CUDA toolkit")
+endif()
+
 if(USE_CUSOLVER)
     target_link_libraries(${PROJECT_NAME} PRIVATE CUDA::cusolver)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUSOLVER)
 endif()
 
 # OpenMP support for CPU parallelization
+# OpenMP is used in both C++ and CUDA host code sections
 if(USE_OPENMP)
-    find_package(OpenMP)
+    find_package(OpenMP COMPONENTS CXX)
     if(OpenMP_CXX_FOUND)
         target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+        # Apply OpenMP flags to both C++ and CUDA (for host code in .cu files)
         target_compile_options(${PROJECT_NAME} PRIVATE 
             $<$<COMPILE_LANGUAGE:CXX>:${OpenMP_CXX_FLAGS}>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler ${OpenMP_CXX_FLAGS}>
         )
         target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OPENMP)
         message(STATUS "OpenMP found: ${OpenMP_CXX_VERSION}")
+        message(STATUS "OpenMP flags: ${OpenMP_CXX_FLAGS}")
     else()
         message(WARNING "OpenMP not found - CPU parallelization disabled")
-        message(WARNING "Install OpenMP: sudo apt-get install libomp-dev (Linux) or brew install libomp (macOS)")
+        message(WARNING "Install OpenMP:")
+        message(WARNING "  Linux: sudo apt-get install libomp-dev")
+        message(WARNING "  macOS: brew install libomp")
+        message(WARNING "  Windows: OpenMP is included with MSVC, or install via vcpkg")
     endif()
+else()
+    message(STATUS "OpenMP disabled (USE_OPENMP=OFF)")
 endif()
 
 # Compiler flags
@@ -245,5 +277,29 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_RESOLVE_DEVICE_SYMBOLS ON
 )
+
+# Summary of build configuration
+message(STATUS "")
+message(STATUS "=== Build Configuration Summary ===")
+message(STATUS "Project: ${PROJECT_NAME} v${PROJECT_VERSION}")
+message(STATUS "CUDA: ENABLED (Architecture: ${CUDA_ARCH})")
+if(USE_OPENMP)
+    if(OpenMP_CXX_FOUND)
+        message(STATUS "OpenMP: ENABLED (${OpenMP_CXX_VERSION})")
+    else()
+        message(STATUS "OpenMP: DISABLED (not found)")
+    endif()
+else()
+    message(STATUS "OpenMP: DISABLED (USE_OPENMP=OFF)")
+endif()
+if(USE_CUSOLVER)
+    message(STATUS "cuSOLVER: ENABLED")
+else()
+    message(STATUS "cuSOLVER: DISABLED")
+endif()
+message(STATUS "===================================")
+message(STATUS "")
 

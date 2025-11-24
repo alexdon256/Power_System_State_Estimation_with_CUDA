@@ -9,6 +9,7 @@
 #include <cuda_runtime.h>
 #include <sle/Types.h>
 #include <sle/cuda/CudaPowerFlow.h>
+#include <sle/cuda/CudaUtils.h>
 #include <cmath>
 
 // Precision-aware CUDA intrinsics (embedded from CudaPrecisionHelpers.h)
@@ -488,18 +489,18 @@ void computeMeasurementsGPU(
     constexpr Index blockSize = 256;
     Index maxSize = (nBuses > nBranches) ? nBuses : nBranches;
     maxSize = (maxSize > nMeasurements) ? maxSize : nMeasurements;
-    Index gridSize = (maxSize + blockSize - 1) / blockSize;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(maxSize);
     
     // OPTIMIZATION: Always use fused kernel for better performance
     // The fused kernel uses proper memory fences to ensure correctness
     // This eliminates kernel launch overhead while maintaining correctness
-    computeMeasurementsFusedKernel<<<gridSize, blockSize, 0, stream>>>(
-        v, theta, buses, branches,
-        branchFromBus, branchFromBusRowPtr,
-        branchToBus, branchToBusRowPtr,
-        measurementTypes, measurementLocations, measurementBranches,
-        pInjection, qInjection, pFlow, qFlow, hx,
-        nBuses, nBranches, nMeasurements);
+    LAUNCH_KERNEL(computeMeasurementsFusedKernel, gridSize, blockSize, 0, stream,
+                  v, theta, buses, branches,
+                  branchFromBus, branchFromBusRowPtr,
+                  branchToBus, branchToBusRowPtr,
+                  measurementTypes, measurementLocations, measurementBranches,
+                  pInjection, qInjection, pFlow, qFlow, hx,
+                  nBuses, nBranches, nMeasurements);
 }
 
 // Unified kernel: Compute power flows with optional derived quantities (MW/MVAR/I)
@@ -1118,7 +1119,7 @@ void computeJacobian(const Real* v, const Real* theta,
                     Index nMeasurements, Index nBuses, Index nBranches,
                     cudaStream_t stream) {
     constexpr Index blockSize = 256;  // Compile-time constant
-    const Index gridSize = (nMeasurements + blockSize - 1) / blockSize;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(nMeasurements);
     
     // Choose kernel based on system size and shared memory availability
     // For smaller systems, use cached version; for larger, use standard version
@@ -1132,20 +1133,20 @@ void computeJacobian(const Real* v, const Real* theta,
     
     // Use cached version if shared memory is available and system is not too large
     if (sharedMemSizeCached < 48 * 1024 && nBuses < 1000 && nBranches < 2000) {
-        computeJacobianKernelCached<<<gridSize, blockSize, sharedMemSizeCached, stream>>>(
-            v, theta, buses, branches,
-            branchFromBus, branchFromBusRowPtr, branchToBus, branchToBusRowPtr,
-            measurementTypes, measurementLocations, measurementBranches,
-            jacobianRowPtr, jacobianColInd, jacobianValues,
-            nMeasurements, nBuses, nBranches);
+        LAUNCH_KERNEL(computeJacobianKernelCached, gridSize, blockSize, sharedMemSizeCached, stream,
+                      v, theta, buses, branches,
+                      branchFromBus, branchFromBusRowPtr, branchToBus, branchToBusRowPtr,
+                      measurementTypes, measurementLocations, measurementBranches,
+                      jacobianRowPtr, jacobianColInd, jacobianValues,
+                      nMeasurements, nBuses, nBranches);
     } else {
         // Use standard kernel for larger systems
-        computeJacobianKernel<<<gridSize, blockSize, sharedMemSizeStandard, stream>>>(
-            v, theta, buses, branches,
-            branchFromBus, branchFromBusRowPtr, branchToBus, branchToBusRowPtr,
-            measurementTypes, measurementLocations, measurementBranches,
-            jacobianRowPtr, jacobianColInd, jacobianValues,
-            nMeasurements, nBuses, nBranches);
+        LAUNCH_KERNEL(computeJacobianKernel, gridSize, blockSize, sharedMemSizeStandard, stream,
+                      v, theta, buses, branches,
+                      branchFromBus, branchFromBusRowPtr, branchToBus, branchToBusRowPtr,
+                      measurementTypes, measurementLocations, measurementBranches,
+                      jacobianRowPtr, jacobianColInd, jacobianValues,
+                      nMeasurements, nBuses, nBranches);
     }
     // Note: No cudaDeviceSynchronize() - caller should sync if needed
 }

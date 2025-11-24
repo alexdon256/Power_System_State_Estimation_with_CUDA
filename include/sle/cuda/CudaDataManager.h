@@ -18,6 +18,7 @@ namespace cuda {
 // Forward declarations
 struct DeviceBus;
 struct DeviceBranch;
+class UnifiedCudaMemoryPool;
 
 // Unified GPU data manager - keeps all data on GPU
 class CudaDataManager {
@@ -26,7 +27,8 @@ public:
     ~CudaDataManager();
     
     // Initialize with network size (allocates GPU memory)
-    void initialize(Index nBuses, Index nBranches, Index nMeasurements);
+    // useUnifiedPool: If true, uses UnifiedCudaMemoryPool for shared buffers (recommended)
+    void initialize(Index nBuses, Index nBranches, Index nMeasurements, bool useUnifiedPool = true);
     
     // Update state on GPU (copies from host once)
     void updateState(const Real* v, const Real* theta, Index nBuses);
@@ -74,12 +76,18 @@ private:
     Index nMeasurements_;
     
     // State data (updated each iteration)
+    // May point to unified pool buffers if useUnifiedPool_ is true
     Real* d_v_;
     Real* d_theta_;
+    size_t vSize_;
+    size_t thetaSize_;
     
     // Network data (updated when network changes)
+    // May point to unified pool buffers if useUnifiedPool_ is true
     DeviceBus* d_buses_;
     DeviceBranch* d_branches_;
+    size_t busesSize_;
+    size_t branchesSize_;
     
     // Measurement data (updated when measurements change)
     Index* d_measurementTypes_;
@@ -95,14 +103,25 @@ private:
     Index branchToBusSize_;
     
     // Output buffers (computed on GPU)
+    // These may point to unified pool buffers if useUnifiedPool_ is true
     Real* d_pInjection_;
     Real* d_qInjection_;
     Real* d_pFlow_;
     Real* d_qFlow_;
     Real* d_hx_;
     
+    // Track sizes for unified pool buffers
+    size_t pInjectionSize_;
+    size_t qInjectionSize_;
+    size_t pFlowSize_;
+    size_t qFlowSize_;
+    size_t hxSize_;
+    
+    bool useUnifiedPool_;  // Whether to use unified memory pool
+    
     void allocateMemory();
     void freeMemory();
+    void allocateWithUnifiedPool();  // Allocate using unified pool
 };
 
 } // namespace cuda

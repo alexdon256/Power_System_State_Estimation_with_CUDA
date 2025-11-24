@@ -14,12 +14,17 @@
 #include <sle/cuda/CudaSparseOps.h>
 #include <sle/cuda/CudaDataManager.h>
 #include <sle/cuda/CudaPowerFlow.h>
+#include <sle/cuda/UnifiedCudaMemoryPool.h>
 #include <sle/math/JacobianMatrix.h>
 #include <cusparse.h>
 #include <cusolverSp.h>
 #include <cmath>
 #include <stdexcept>
 #include <vector>
+
+#ifdef USE_OPENMP
+#include <omp.h>
+#endif
 
 namespace sle {
 namespace math {
@@ -36,6 +41,7 @@ Solver::Solver()
     : jacobian_(std::make_unique<JacobianMatrix>()),
       measFuncs_(std::make_unique<MeasurementFunctions>()),
       sharedDataManager_(std::make_unique<cuda::CudaDataManager>()),
+      useUnifiedPool_(true),
       streamInitialized_(false),
       transferStream_(nullptr) {
     // Share CudaDataManager with MeasurementFunctions
@@ -121,36 +127,9 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     
     // OPTIMIZATION: Use pinned memory and async transfers with dedicated streams
     // Allocate/ensure pinned memory buffers for frequently transferred data
-    if (pinned_z_size_ < nMeas) {
-        if (h_pinned_z_) cudaFreeHost(h_pinned_z_);
-        cudaError_t err = cudaMallocHost(&h_pinned_z_, nMeas * sizeof(Real));
-        if (err == cudaSuccess) {
-            pinned_z_size_ = nMeas;
-        } else {
-            h_pinned_z_ = nullptr;
-            pinned_z_size_ = 0;
-        }
-    }
-    if (pinned_weights_size_ < nMeas) {
-        if (h_pinned_weights_) cudaFreeHost(h_pinned_weights_);
-        cudaError_t err = cudaMallocHost(&h_pinned_weights_, nMeas * sizeof(Real));
-        if (err == cudaSuccess) {
-            pinned_weights_size_ = nMeas;
-        } else {
-            h_pinned_weights_ = nullptr;
-            pinned_weights_size_ = 0;
-        }
-    }
-    if (pinned_state_size_ < nStates) {
-        if (h_pinned_state_) cudaFreeHost(h_pinned_state_);
-        cudaError_t err = cudaMallocHost(&h_pinned_state_, nStates * sizeof(Real));
-        if (err == cudaSuccess) {
-            pinned_state_size_ = nStates;
-        } else {
-            h_pinned_state_ = nullptr;
-            pinned_state_size_ = 0;
-        }
-    }
+    cuda::allocatePinnedBuffer(h_pinned_z_, pinned_z_size_, nMeas);
+    cuda::allocatePinnedBuffer(h_pinned_weights_, pinned_weights_size_, nMeas);
+    cuda::allocatePinnedBuffer(h_pinned_state_, pinned_state_size_, nStates);
     
     // Copy to pinned memory (fast CPU-side copy)
     Real* z_src = h_pinned_z_ ? h_pinned_z_ : z.data();
@@ -218,8 +197,6 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
         
         // Fused: Update state and compute norm in one kernel (using pooled buffer)
         const Real damping = config_.dampingFactor;
-        constexpr size_t blockSize = 256;
-        size_t gridSize = (nStates + blockSize - 1) / blockSize;
         // OPTIMIZATION: Use compute stream for overlapping operations
         Real normSq = sle::cuda::updateStateAndComputeNorm(memoryPool_.d_x_old, memoryPool_.d_deltaX,
                                                            memoryPool_.d_x_new, damping,
@@ -245,7 +222,8 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
                                                                            memoryPool_.d_weights,
                                                                            memoryPool_.d_residual,
                                                                            static_cast<Index>(nMeas),
-                                                                           memoryPool_.d_partial, memoryPool_.partialSize);
+                                                                           memoryPool_.d_partial, memoryPool_.partialSize,
+                                                                           computeStream_);
             break;
         }
         
@@ -282,7 +260,7 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
                                                                            memoryPool_.d_residual,
                                                                            static_cast<Index>(nMeas),
                                                                            memoryPool_.d_partial, memoryPool_.partialSize,
-                                                                           stream);
+                                                                           computeStream_);
         }
     }
     
@@ -352,6 +330,10 @@ void Solver::storeComputedValues(model::StateVector& state, model::NetworkModel&
         }
         
         Real baseMVA = network.getBaseMVA();
+        // OPTIMIZATION: OpenMP parallelization for independent loop
+#ifdef USE_OPENMP
+        #pragma omp parallel for
+#endif
         for (size_t i = 0; i < nBuses && i < buses.size(); ++i) {
             Bus* bus = buses[i];
             Real pMW = pInjection[i] * baseMVA;
@@ -399,6 +381,10 @@ void Solver::storeComputedValues(model::StateVector& state, model::NetworkModel&
                 }
                 
                 auto branches = network.getBranches();
+                // OPTIMIZATION: OpenMP parallelization for independent loop
+#ifdef USE_OPENMP
+                #pragma omp parallel for
+#endif
                 for (size_t i = 0; i < nBranches && i < branches.size(); ++i) {
                     branches[i]->setPowerFlow(pFlow[i], qFlow[i], 0.0, 0.0, 0.0, 0.0);
                 }
@@ -435,7 +421,11 @@ void Solver::storeComputedValues(model::StateVector& state, model::NetworkModel&
             }
             
             // Store in Branch objects
+            // OPTIMIZATION: OpenMP parallelization for independent loop
             auto branches = network.getBranches();
+#ifdef USE_OPENMP
+            #pragma omp parallel for
+#endif
             for (size_t i = 0; i < nBranches && i < branches.size(); ++i) {
                 branches[i]->setPowerFlow(pFlow[i], qFlow[i], pMW[i], qMVAR[i], iAmps[i], iPU[i]);
             }
