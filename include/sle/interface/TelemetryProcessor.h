@@ -50,7 +50,8 @@ public:
     // Add/update measurement in real-time
     void updateMeasurement(const TelemetryUpdate& update);
     void addMeasurement(const TelemetryUpdate& update);
-    void removeMeasurement(const std::string& deviceId);
+    // Remove all measurements from a device
+    void removeAllMeasurementsFromDevice(const std::string& deviceId);
     
     // Batch updates
     void updateMeasurements(const std::vector<TelemetryUpdate>& updates);

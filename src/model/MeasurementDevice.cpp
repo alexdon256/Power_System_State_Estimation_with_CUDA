@@ -18,14 +18,10 @@ MeasurementDevice::MeasurementDevice(DeviceId id, const std::string& name)
 void MeasurementDevice::addMeasurement(MeasurementModel* measurement) {
     if (!measurement) return;
     
-    // Check if already added
-    auto it = std::find(measurements_.begin(), measurements_.end(), measurement);
-    if (it == measurements_.end()) {
+    // Avoid duplicates
+    if (std::find(measurements_.begin(), measurements_.end(), measurement) == measurements_.end()) {
         measurements_.push_back(measurement);
-        // Set device ID in measurement if not already set
-        if (measurement->getDeviceId().empty()) {
-            measurement->setDeviceId(id_);
-        }
+        measurement->setDevice(this);
     }
 }
 
@@ -35,6 +31,7 @@ void MeasurementDevice::removeMeasurement(MeasurementModel* measurement) {
     auto it = std::find(measurements_.begin(), measurements_.end(), measurement);
     if (it != measurements_.end()) {
         measurements_.erase(it);
+        measurement->setDevice(nullptr);
     }
 }
 

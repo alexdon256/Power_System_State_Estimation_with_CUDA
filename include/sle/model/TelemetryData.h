@@ -29,21 +29,11 @@ public:
     
     size_t getMeasurementCount() const { return measurements_.size(); }
     
-    // Filter measurements by type
-    std::vector<const MeasurementModel*> getMeasurementsByType(MeasurementType type) const;
+    // Remove specific measurement by pointer
+    bool removeMeasurement(MeasurementModel* measurement);
     
-    // Filter measurements by bus
-    std::vector<const MeasurementModel*> getMeasurementsByBus(BusId busId) const;
-    
-    // Filter measurements by branch
-    std::vector<const MeasurementModel*> getMeasurementsByBranch(BusId fromBus, BusId toBus) const;
-    
-    // Find measurement by device ID (O(1) average case)
-    MeasurementModel* findMeasurementByDeviceId(const std::string& deviceId);
-    const MeasurementModel* findMeasurementByDeviceId(const std::string& deviceId) const;
-    
-    // Remove measurement by device ID
-    bool removeMeasurement(const std::string& deviceId);
+    // Remove all measurements from a device
+    size_t removeAllMeasurementsFromDevice(const std::string& deviceId);
     
     // Update measurement by device ID (returns true if found and updated)
     bool updateMeasurement(const std::string& deviceId, Real value, Real stdDev, int64_t timestamp = -1);
@@ -56,22 +46,23 @@ public:
     
     // Measurement device management
     void addDevice(std::unique_ptr<MeasurementDevice> device);
-    MeasurementDevice* getDevice(const DeviceId& deviceId);
-    const MeasurementDevice* getDevice(const DeviceId& deviceId) const;
-    std::vector<const MeasurementDevice*> getDevices() const;
+    const std::unordered_map<std::string, std::unique_ptr<MeasurementDevice>>& getDevices() const {
+        return devices_;
+    }
     std::vector<const MeasurementDevice*> getDevicesByBus(BusId busId) const;
     std::vector<const MeasurementDevice*> getDevicesByBranch(BusId fromBus, BusId toBus) const;
     
     void clear();
     
 private:
-    
+    // Primary storage: maintains order, enables O(measurements) sequential access
+    // Used by: getMeasurements(), getMeasurementVector(), getWeightMatrix(), Jacobian building
     std::vector<std::unique_ptr<MeasurementModel>> measurements_;
-    std::unordered_map<std::string, size_t> deviceIdIndex_;  // Device ID -> index mapping for O(1) lookup
     
-    // Measurement devices (multimeters, voltmeters, etc.)
-    std::vector<std::unique_ptr<MeasurementDevice>> devices_;
-    std::unordered_map<std::string, size_t> deviceIndex_;  // Device ID -> device index mapping
+    // Device index: enables O(1) device lookups and O(device_measurements) device-specific queries
+    // Used by: updateMeasurement(), removeMeasurement(), Bus/Branch device queries
+    // Note: MeasurementDevice::measurements_ stores pointers to measurements owned by measurements_
+    std::unordered_map<std::string, std::unique_ptr<MeasurementDevice>> devices_;
 };
 
 } // namespace model

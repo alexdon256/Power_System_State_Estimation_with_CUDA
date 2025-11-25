@@ -38,10 +38,10 @@ void TelemetryProcessor::addMeasurement(const TelemetryUpdate& update) {
     updateMeasurement(update);
 }
 
-void TelemetryProcessor::removeMeasurement(const std::string& deviceId) {
+void TelemetryProcessor::removeAllMeasurementsFromDevice(const std::string& deviceId) {
     if (!telemetry_) return;
     
-    telemetry_->removeMeasurement(deviceId);
+    telemetry_->removeAllMeasurementsFromDevice(deviceId);
 }
 
 void TelemetryProcessor::updateMeasurements(const std::vector<TelemetryUpdate>& updates) {
@@ -51,55 +51,60 @@ void TelemetryProcessor::updateMeasurements(const std::vector<TelemetryUpdate>& 
 }
 
 void TelemetryProcessor::applyUpdate(const TelemetryUpdate& update) {
-    
-    // Special handling for BREAKER_STATUS
+    // Handle BREAKER_STATUS separately (updates topology, not telemetry)
     if (update.type == MeasurementType::BREAKER_STATUS) {
         if (network_) {
             model::Branch* branch = nullptr;
-            
-            // OPTIMIZED: O(1) lookup by (fromBus, toBus) pair instead of O(avg_degree) linear search
             if (update.fromBus >= 0 && update.toBus >= 0) {
                 branch = network_->getBranchByBuses(update.fromBus, update.toBus);
-            } 
-            // Fallback: Try interpreting busId as BranchId if provided
-            else if (update.busId >= 0) {
+            } else if (update.busId >= 0) {
                 branch = network_->getBranch(update.busId);
             }
             
             if (branch) {
-                bool newStatus = (update.value > 0.5); // > 0.5 considered Closed
+                bool newStatus = (update.value > 0.5);
                 if (branch->getStatus() != newStatus) {
                     branch->setStatus(newStatus);
-                    // Trigger topology change
                     if (onTopologyChange_) {
                         onTopologyChange_();
                     }
                 }
             }
         }
-        return; // Don't add breaker status to telemetry measurements
+        return;
     }
 
     if (!telemetry_) return;
     
-    // Try to update existing measurement by device ID
-    if (!update.deviceId.empty() && 
-        telemetry_->updateMeasurement(update.deviceId, update.value, update.stdDev, update.timestamp)) {
-        latestTimestamp_ = update.timestamp;
-        return;  // Successfully updated existing measurement
+    // Find device
+    model::MeasurementDevice* device = nullptr;
+    if (!update.deviceId.empty()) {
+        const auto& devices = telemetry_->getDevices();
+        auto it = devices.find(update.deviceId);
+        if (it != devices.end()) {
+            device = it->second.get();
+        }
     }
     
-    // Create new measurement if update failed (device ID not found or empty)
-    auto measurement = std::make_unique<model::MeasurementModel>(
-        update.type, update.value, update.stdDev, update.deviceId);
+    // Try updating existing measurement
+    if (device && telemetry_->updateMeasurement(update.deviceId, update.value, update.stdDev, update.timestamp)) {
+        latestTimestamp_ = update.timestamp;
+        return;
+    }
     
+    // Create new measurement
+    auto measurement = std::make_unique<model::MeasurementModel>(
+        update.type, update.value, update.stdDev);
+    
+    if (device) {
+        measurement->setDevice(device);
+    }
     if (update.busId >= 0) {
         measurement->setLocation(update.busId);
     }
     if (update.fromBus >= 0 && update.toBus >= 0) {
         measurement->setBranchLocation(update.fromBus, update.toBus);
     }
-    
     measurement->setTimestamp(update.timestamp);
     latestTimestamp_ = update.timestamp;
     

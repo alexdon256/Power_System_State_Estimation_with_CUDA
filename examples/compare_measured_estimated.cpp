@@ -557,8 +557,10 @@ int main(int argc, char* argv[]) {
         // ========================================================================
         std::cout << "=== Device-Level Comparison ===\n\n";
         
-        auto devices = telemetry->getDevices();
-        for (const auto* device : devices) {
+        const auto& devices = telemetry->getDevices();
+        for (const auto& pair : devices) {
+            if (!pair.second) continue;
+            const auto* device = pair.second.get();
             std::cout << "Device: " << device->getId() << " (" << device->getName() << ")\n";
             std::cout << "  Type: " << device->getDeviceType() << "\n";
             std::cout << "  Status: " << static_cast<int>(device->getStatus()) << "\n";

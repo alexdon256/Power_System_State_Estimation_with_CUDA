@@ -14,10 +14,12 @@
 namespace sle {
 namespace model {
 
+// Forward declaration
+class MeasurementDevice;
+
 class MeasurementModel {
 public:
-    MeasurementModel(MeasurementType type, Real value, Real stdDev, 
-                     DeviceId deviceId = "");
+    MeasurementModel(MeasurementType type, Real value, Real stdDev);
     
     MeasurementType getType() const { return type_; }
     Real getValue() const { return value_; }
@@ -28,8 +30,9 @@ public:
     Real getVariance() const { return stdDev_ * stdDev_; }
     Real getWeight() const { return 1.0 / getVariance(); }
     
-    DeviceId getDeviceId() const { return deviceId_; }
-    void setDeviceId(DeviceId id) { deviceId_ = id; }
+    MeasurementDevice* getDevice() const { return device_; }
+    void setDevice(MeasurementDevice* device) { device_ = device; }
+    std::string getDeviceId() const;  // Get device ID from device pointer
     
     void setLocation(BusId busId) { busId_ = busId; }
     BusId getLocation() const { return busId_; }
@@ -50,7 +53,7 @@ private:
     MeasurementType type_;
     Real value_;
     Real stdDev_;
-    DeviceId deviceId_;
+    MeasurementDevice* device_;  // Pointer to device that produced this measurement
     
     BusId busId_;      // For bus measurements
     BusId fromBus_;    // For branch measurements

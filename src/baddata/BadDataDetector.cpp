@@ -84,7 +84,9 @@ BadDataResult BadDataDetector::detectBadDataChiSquare(
         for (size_t i = 0; i < normalizedResiduals.size(); ++i) {
             if (std::abs(normalizedResiduals[i]) > normalizedResidualThreshold_) {
                 result.badMeasurementIndices.push_back(i);
-                result.badDeviceIds.push_back(measurements[i]->getDeviceId());
+                if (measurements[i]->getDevice()) {
+                    result.badDeviceIds.push_back(measurements[i]->getDevice()->getId());
+                }
             }
         }
     } else {
@@ -128,7 +130,9 @@ BadDataResult BadDataDetector::detectBadDataLNR(
             
             const auto& measurements = telemetry.getMeasurements();
             if (maxIdx >= 0 && static_cast<size_t>(maxIdx) < measurements.size()) {
-                result.badDeviceIds.push_back(measurements[maxIdx]->getDeviceId());
+                if (measurements[maxIdx]->getDevice()) {
+                    result.badDeviceIds.push_back(measurements[maxIdx]->getDevice()->getId());
+                }
             }
         }
     }
@@ -167,42 +171,45 @@ BadDataResult BadDataDetector::detectBadData(
 
 void BadDataDetector::removeBadMeasurements(model::TelemetryData& telemetry,
                                            const BadDataResult& result) {
-    // Remove measurements by device ID (preferred method - O(1) average case)
+    // Strategy 1: Remove all measurements from bad devices (device-level bad data)
     for (const std::string& deviceId : result.badDeviceIds) {
         if (!deviceId.empty()) {
-            telemetry.removeMeasurement(deviceId);
+            telemetry.removeAllMeasurementsFromDevice(deviceId);
         }
     }
     
-    // Also handle indices if device IDs are not available
-    // Extract device IDs from indices before any removals (to avoid index shifting)
+    // Strategy 2: Remove specific bad measurements by index (measurement-level bad data)
+    // Process indices in reverse order to avoid index shifting issues
     if (!result.badMeasurementIndices.empty()) {
         const auto& measurements = telemetry.getMeasurements();
-        std::vector<std::string> deviceIdsFromIndices;
         
-        // Collect device IDs from indices (before any removals)
-        for (Index idx : result.badMeasurementIndices) {
+        // Sort indices in descending order to avoid index shifting during removal
+        std::vector<Index> sortedIndices = result.badMeasurementIndices;
+        std::sort(sortedIndices.begin(), sortedIndices.end(), std::greater<Index>());
+        
+        // Remove measurements by index (from highest to lowest)
+        for (Index idx : sortedIndices) {
             if (idx >= 0 && static_cast<size_t>(idx) < measurements.size()) {
-                const std::string& deviceId = measurements[idx]->getDeviceId();
-                if (!deviceId.empty()) {
-                    // Check if not already in badDeviceIds (avoid duplicate removal)
-                    bool alreadyRemoved = false;
-                    for (const std::string& existingId : result.badDeviceIds) {
-                        if (existingId == deviceId) {
-                            alreadyRemoved = true;
-                            break;
+                MeasurementModel* m = measurements[idx].get();
+                if (m) {
+                    // Check if this device was already removed (avoid duplicate removal)
+                    bool deviceAlreadyRemoved = false;
+                    if (m->getDevice()) {
+                        const std::string& deviceId = m->getDevice()->getId();
+                        for (const std::string& badDeviceId : result.badDeviceIds) {
+                            if (deviceId == badDeviceId) {
+                                deviceAlreadyRemoved = true;
+                                break;
+                            }
                         }
                     }
-                    if (!alreadyRemoved) {
-                        deviceIdsFromIndices.push_back(deviceId);
+                    
+                    // Only remove if device wasn't already removed
+                    if (!deviceAlreadyRemoved) {
+                        telemetry.removeMeasurement(m);
                     }
                 }
             }
-        }
-        
-        // Remove by device ID (avoids index shifting issues)
-        for (const std::string& deviceId : deviceIdsFromIndices) {
-            telemetry.removeMeasurement(deviceId);
         }
     }
 }

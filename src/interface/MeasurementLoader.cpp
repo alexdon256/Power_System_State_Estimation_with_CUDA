@@ -115,8 +115,16 @@ std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromCSV(
             continue;  // Skip invalid values
         }
         
-        auto measurement = std::make_unique<model::MeasurementModel>(
-            type, value, stdDev, deviceId);
+        auto measurement = std::make_unique<model::MeasurementModel>(type, value, stdDev);
+        
+        // Link to device if device exists (O(1) lookup)
+        if (!deviceId.empty()) {
+            const auto& devices = telemetry->getDevices();
+            auto deviceIt = devices.find(deviceId);
+            if (deviceIt != devices.end() && deviceIt->second) {
+                measurement->setDevice(deviceIt->second.get());
+            }
+        }
         
         if (fromBus >= 0 && toBus >= 0) {
             measurement->setBranchLocation(fromBus, toBus);
@@ -149,7 +157,7 @@ void MeasurementLoader::addPseudoMeasurements(model::TelemetryData& telemetry,
         Real stdDev = 0.1;  // High uncertainty for pseudo measurements
         
         auto pMeas = std::make_unique<model::MeasurementModel>(
-            MeasurementType::PSEUDO, loadForecasts[i], stdDev, "PSEUDO_P");
+            MeasurementType::PSEUDO, loadForecasts[i], stdDev);
         pMeas->setLocation(buses[i]->getId());
         telemetry.addMeasurement(std::move(pMeas));
     }
