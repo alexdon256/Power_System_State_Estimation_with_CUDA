@@ -12,7 +12,7 @@ Complete reference for all setters and getters in the State Estimation library.
 6. [TelemetryData](#telemetrydata)
 7. [MeasurementModel](#measurementmodel)
 8. [DeviceModel](#devicemodel)
-9. [TelemetryProcessor](#telemetryprocessor)
+9. [TelemetryData (Real-Time Updates)](#telemetrydata-real-time-updates)
 10. [RobustEstimator](#robustestimator)
 11. [MultiAreaEstimator](#multiareaestimator)
 12. [Solver](#solver)
@@ -81,14 +81,14 @@ Main class for state estimation operations.
 - **Returns:** Shared pointer to TelemetryData
 - **Usage:** Access measurements, query measurement data
 
-#### `TelemetryProcessor& getTelemetryProcessor()`
-- **Description:** Get reference to telemetry processor for real-time updates
-- **Returns:** Reference to TelemetryProcessor
+#### `std::shared_ptr<TelemetryData> getTelemetryData() const`
+- **Description:** Get telemetry data for real-time updates
+- **Returns:** Shared pointer to TelemetryData
 - **Usage:** 
   ```cpp
-  auto& processor = estimator.getTelemetryProcessor();
-  processor.startRealTimeProcessing();
-  processor.updateMeasurement(update);
+  auto telemetry = estimator.getTelemetryData();
+  telemetry->setNetworkModel(network.get());
+  telemetry->updateMeasurement(update);
   ```
 
 #### `const math::SolverConfig& getSolverConfig() const`
@@ -576,25 +576,7 @@ Container for telemetry measurements.
 - **Returns:** Const reference to measurements vector
 - **Usage:** Iterate over all measurements
 
-#### `std::vector<const MeasurementModel*> getMeasurementsByType(MeasurementType type) const`
-- **Description:** Get measurements by type
-- **Parameters:** `type` - MeasurementType enum
-- **Returns:** Vector of measurement pointers
-- **Usage:** Filter measurements by type
-
-#### `std::vector<const MeasurementModel*> getMeasurementsByBus(BusId busId) const`
-- **Description:** Get measurements at a bus
-- **Parameters:** `busId` - Bus ID
-- **Returns:** Vector of measurement pointers
-- **Usage:** Find measurements at specific bus
-
-#### `std::vector<const MeasurementModel*> getMeasurementsByBranch(BusId fromBus, BusId toBus) const`
-- **Description:** Get measurements on a branch
-- **Parameters:**
-  - `fromBus` - From bus ID
-  - `toBus` - To bus ID
-- **Returns:** Vector of measurement pointers
-- **Usage:** Find measurements on specific branch
+**Note:** To filter measurements by type, bus, or branch, iterate through `getMeasurements()` and check each measurement's properties, or use `Bus::getMeasurementsFromDevices()` and `Branch::getMeasurementsFromDevices()` methods for device-based queries.
 
 ---
 
@@ -727,25 +709,45 @@ Measurement device model.
 
 ---
 
-## TelemetryProcessor
+## TelemetryData (Real-Time Updates)
 
-**Header:** `include/sle/interface/TelemetryProcessor.h`
+**Header:** `include/sle/model/TelemetryData.h`
 
-Real-time telemetry update processor.
+**Note:** TelemetryProcessor has been merged into TelemetryData. All real-time update functionality is now available directly on TelemetryData.
 
-### Setters
+### Real-Time Update Methods
 
-#### `void setTelemetryData(model::TelemetryData* telemetry)`
-- **Description:** Set telemetry data container
-- **Parameters:** `telemetry` - Pointer to TelemetryData
-- **Usage:** Initialize processor
+#### `void setNetworkModel(NetworkModel* network)`
+- **Description:** Set network model for topology updates (e.g., breaker status)
+- **Parameters:** `network` - Pointer to NetworkModel
+- **Usage:** Enable topology change handling
 
-### Getters
+#### `void setTopologyChangeCallback(std::function<void()> callback)`
+- **Description:** Set callback for topology changes
+- **Parameters:** `callback` - Function to call when topology changes
+- **Usage:** React to breaker status changes
 
-#### `bool hasPendingUpdates() const`
-- **Description:** Check if updates are pending
-- **Returns:** True if queue has updates
-- **Usage:** Check update status
+#### `void updateMeasurement(const TelemetryUpdate& update)`
+- **Description:** Update or add a measurement
+- **Parameters:** `update` - TelemetryUpdate structure (must include `type` field)
+- **Usage:** Real-time measurement updates. For BREAKER_STATUS, automatically updates branch topology.
+- **Note:** The `type` field is required since a device can have multiple measurements.
+
+#### `bool updateMeasurement(const std::string& deviceId, MeasurementType type, Real value, Real stdDev, int64_t timestamp = -1)`
+- **Description:** Update an existing measurement by device ID and type
+- **Parameters:** 
+  - `deviceId` - Device identifier
+  - `type` - Measurement type (required - device may have multiple measurements)
+  - `value` - New measurement value
+  - `stdDev` - Standard deviation
+  - `timestamp` - Optional timestamp
+- **Returns:** `true` if measurement was found and updated
+- **Usage:** Direct update without TelemetryUpdate structure
+
+#### `void updateMeasurements(const std::vector<TelemetryUpdate>& updates)`
+- **Description:** Batch update multiple measurements
+- **Parameters:** `updates` - Vector of TelemetryUpdate structures
+- **Usage:** Efficient batch processing
 
 #### `int64_t getLatestTimestamp() const`
 - **Description:** Get latest measurement timestamp
@@ -896,11 +898,19 @@ bool isTransformer = branch->isTransformer();
 // Get measurements
 auto telemetry = estimator.getTelemetryData();
 size_t nMeas = telemetry->getMeasurementCount();
-auto busMeas = telemetry->getMeasurementsByBus(busId);
+const auto& allMeasurements = telemetry->getMeasurements();
+// Filter by bus/location as needed, or use Bus::getMeasurementsFromDevices()
 
 // Real-time updates
-auto& processor = estimator.getTelemetryProcessor();
-processor.updateMeasurement(update);
+telemetry->setNetworkModel(network.get());
+sle::model::TelemetryUpdate update;
+update.deviceId = "DEVICE_001";
+update.type = sle::MeasurementType::V_MAGNITUDE;  // Required: device may have multiple measurements
+update.value = 1.05;
+update.stdDev = 0.01;
+update.busId = 1;
+update.timestamp = getCurrentTimestamp();
+telemetry->updateMeasurement(update);
 
 // Compare measured vs estimated
 #include <sle/io/ComparisonReport.h>

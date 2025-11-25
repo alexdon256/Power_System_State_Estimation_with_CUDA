@@ -41,6 +41,8 @@ Format: `type,deviceId,0,fromBus,toBus,value,stdDev`
 - `0.0` = Open (breaker blocks power flow)
 - Values > 0.5 are interpreted as closed, ≤ 0.5 as open
 
+**Note:** When BREAKER_STATUS measurements are loaded or updated, they automatically update the branch status in the network topology. This triggers topology change callbacks if configured via `TelemetryData::setTopologyChangeCallback()`.
+
 **Bus Measurement Format:**
 ```
 V_MAGNITUDE,VM-001,5,,,1.05,0.01

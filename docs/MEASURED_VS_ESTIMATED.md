@@ -562,15 +562,13 @@ The example includes optimizations for fast computation and extraction:
 The example demonstrates how to update measurement values without modifying device metadata:
 
 ```cpp
-#include <sle/interface/TelemetryProcessor.h>
+#include <sle/model/TelemetryData.h>
 
-// Create processor
-TelemetryProcessor processor;
-processor.setTelemetryData(&telemetry);
-processor.setNetworkModel(&network);
+// Configure telemetry for updates
+telemetry->setNetworkModel(&network);
 
 // Update measurement value (device stays unchanged)
-TelemetryUpdate update;
+sle::model::TelemetryUpdate update;
 update.deviceId = "VM-001";  // Existing device ID
 update.type = MeasurementType::V_MAGNITUDE;
 update.value = 1.06;  // New value (device metadata unchanged)
@@ -579,11 +577,11 @@ update.busId = 1;
 update.timestamp = getCurrentTimestamp();
 
 // Update measurement (fast - O(1) lookup)
-processor.updateMeasurement(update);
+telemetry->updateMeasurement(update);
 
 // Batch updates for better performance
-std::vector<TelemetryUpdate> updates = {...};
-processor.updateMeasurements(updates);  // Processes all updates efficiently
+std::vector<sle::model::TelemetryUpdate> updates = {...};
+telemetry->updateMeasurements(updates);  // Processes all updates efficiently
 
 // Updated values are immediately visible
 const Bus* bus = network.getBus(1);

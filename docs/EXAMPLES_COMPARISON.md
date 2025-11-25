@@ -129,9 +129,10 @@ auto robustResult = robustEstimator.estimate(*robustState, *network, *telemetry)
 - **Use Case**: Continuous operation
 
 ```cpp
-estimator.getTelemetryProcessor().startRealTimeProcessing();
+auto telemetry = estimator.getTelemetryData();
+telemetry->setNetworkModel(network.get());
 for (int i = 0; i < NUM_UPDATES; ++i) {
-    estimator.getTelemetryProcessor().updateMeasurement(update);
+    telemetry->updateMeasurement(update);
     auto incResult = estimator.estimateIncremental();
 }
 ```
@@ -145,9 +146,10 @@ for (int i = 0; i < NUM_UPDATES; ++i) {
 - **Use Case**: Continuous operation with bad data handling and comprehensive validation
 
 ```cpp
-estimator.getTelemetryProcessor().startRealTimeProcessing();
+auto telemetry = estimator.getTelemetryData();
+telemetry->setNetworkModel(network.get());
 for (int i = 0; i < NUM_CYCLES; ++i) {
-    estimator.getTelemetryProcessor().updateMeasurement(update);
+    telemetry->updateMeasurement(update);
     auto wlsResult = estimator.estimateIncremental();  // Every cycle
     if (cycleCount % 5 == 0) {
         robustEstimator.estimate(...);  // Periodic

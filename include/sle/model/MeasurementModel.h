@@ -27,8 +27,7 @@ public:
     
     Real getStdDev() const { return stdDev_; }
     void setStdDev(Real stdDev) { stdDev_ = stdDev; }
-    Real getVariance() const { return stdDev_ * stdDev_; }
-    Real getWeight() const { return 1.0 / getVariance(); }
+    Real getWeight() const { return 1.0 / (stdDev_ * stdDev_); }
     
     MeasurementDevice* getDevice() const { return device_; }
     void setDevice(MeasurementDevice* device) { device_ = device; }
@@ -41,13 +40,8 @@ public:
     BusId getFromBus() const { return fromBus_; }
     BusId getToBus() const { return toBus_; }
     
-    void setStatus(MeasurementStatus status) { status_ = status; }
-    MeasurementStatus getStatus() const { return status_; }
-    
     void setTimestamp(int64_t timestamp) { timestamp_ = timestamp; }
     int64_t getTimestamp() const { return timestamp_; }
-    
-    bool isPseudo() const { return type_ == MeasurementType::PSEUDO; }
     
 private:
     MeasurementType type_;
@@ -59,7 +53,6 @@ private:
     BusId fromBus_;    // For branch measurements
     BusId toBus_;      // For branch measurements
     
-    MeasurementStatus status_;
     int64_t timestamp_;
 };
 

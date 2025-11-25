@@ -12,7 +12,6 @@
 #include <sle/model/TelemetryData.h>
 #include <sle/model/StateVector.h>
 #include <sle/math/Solver.h>
-#include <sle/interface/TelemetryProcessor.h>
 #include <sle/baddata/BadDataDetector.h> // Added for bad data result type
 #include <memory>
 #include <atomic>
@@ -42,9 +41,6 @@ public:
     // Set telemetry data (can be updated in real-time)
     void setTelemetryData(std::shared_ptr<model::TelemetryData> telemetry);
     std::shared_ptr<model::TelemetryData> getTelemetryData() const;
-    
-    // Get telemetry processor for real-time updates
-    TelemetryProcessor& getTelemetryProcessor() { return telemetryProcessor_; }
     
     // Run state estimation
     StateEstimationResult estimate();
@@ -96,7 +92,6 @@ private:
     std::shared_ptr<model::StateVector> currentState_;
     
     std::unique_ptr<math::Solver> solver_;
-    TelemetryProcessor telemetryProcessor_;
     
     std::atomic<bool> modelUpdated_;
     std::atomic<bool> telemetryUpdated_;

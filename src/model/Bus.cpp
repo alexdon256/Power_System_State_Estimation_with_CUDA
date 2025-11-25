@@ -42,10 +42,6 @@ void Bus::setShunt(Real gShunt, Real bShunt) {
     bShunt_ = bShunt;
 }
 
-void Bus::setVoltageLimits(Real vMin, Real vMax) {
-    vMin_ = vMin;
-    vMax_ = vMax;
-}
 
 bool Bus::isZeroInjection() const {
     // Zero injection if no load and no generation

@@ -79,17 +79,18 @@ estimator.setSolverConfig(config);
 ### Basic Real-Time Updates
 
 ```cpp
-auto& processor = estimator.getTelemetryProcessor();
-processor.startRealTimeProcessing();
+auto telemetry = estimator.getTelemetryData();
+telemetry->setNetworkModel(network.get());
 
 // Update measurements on the fly
-sle::interface::TelemetryUpdate update;
+sle::model::TelemetryUpdate update;
 update.deviceId = "METER_1";
-update.type = sle::MeasurementType::P_INJECTION;
+update.type = sle::MeasurementType::P_INJECTION;  // Required: device may have multiple measurements
 update.value = 1.5;
+update.stdDev = 0.01;  // Standard deviation
 update.busId = 1;
 update.timestamp = getCurrentTimestamp();
-processor.updateMeasurement(update);
+telemetry->updateMeasurement(update);
 
 // Run incremental estimation (faster)
 auto result = estimator.estimateIncremental();

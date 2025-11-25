@@ -117,22 +117,14 @@ std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromCSV(
         
         auto measurement = std::make_unique<model::MeasurementModel>(type, value, stdDev);
         
-        // Link to device if device exists (O(1) lookup)
-        if (!deviceId.empty()) {
-            const auto& devices = telemetry->getDevices();
-            auto deviceIt = devices.find(deviceId);
-            if (deviceIt != devices.end() && deviceIt->second) {
-                measurement->setDevice(deviceIt->second.get());
-            }
-        }
-        
         if (fromBus >= 0 && toBus >= 0) {
             measurement->setBranchLocation(fromBus, toBus);
         } else if (busId >= 0) {
             measurement->setLocation(busId);
         }
         
-        telemetry->addMeasurement(std::move(measurement));
+        // Pass deviceId to addMeasurement for automatic linking
+        telemetry->addMeasurement(std::move(measurement), deviceId);
     }
     
     return telemetry;
@@ -216,8 +208,10 @@ void MeasurementLoader::loadDevicesFromCSV(const std::string& filepath,
                 // Use defaults on parse error
             }
             
+            model::MeasurementDevice* devicePtr = nullptr;
+            
             if (deviceType == "MULTIMETER" || deviceType == "MM") {
-                // For multimeter, locationStr should be branchId or "fromBus,toBus"
+                // For multimeter, locationStr should be branchId or "fromBus:toBus"
                 std::istringstream locStream(locationStr);
                 std::string fromBusStr, toBusStr;
                 
@@ -239,6 +233,7 @@ void MeasurementLoader::loadDevicesFromCSV(const std::string& filepath,
                             deviceId, branch->getId(), fromBus, toBus, ctRatio, ptRatio, name
                         );
                         multimeter->setAccuracy(accuracy);
+                        devicePtr = multimeter.get();
                         telemetry.addDevice(std::move(multimeter));
                     }
                 } else {
@@ -256,6 +251,7 @@ void MeasurementLoader::loadDevicesFromCSV(const std::string& filepath,
                             ctRatio, ptRatio, name
                         );
                         multimeter->setAccuracy(accuracy);
+                        devicePtr = multimeter.get();
                         telemetry.addDevice(std::move(multimeter));
                     }
                 }
@@ -271,7 +267,36 @@ void MeasurementLoader::loadDevicesFromCSV(const std::string& filepath,
                     deviceId, busId, ptRatio, name
                 );
                 voltmeter->setAccuracy(accuracy);
+                devicePtr = voltmeter.get();
                 telemetry.addDevice(std::move(voltmeter));
+            }
+            
+            // Link existing measurements to this device by matching location
+            // This handles the case where measurements were loaded before devices
+            if (devicePtr) {
+                const auto& measurements = telemetry.getMeasurements();
+                for (const auto& m : measurements) {
+                    if (m && !m->getDevice()) {
+                        bool shouldLink = false;
+                        
+                        // For voltmeters, match by busId
+                        const Voltmeter* voltmeter = dynamic_cast<const Voltmeter*>(devicePtr);
+                        if (voltmeter && m->getLocation() == voltmeter->getBusId()) {
+                            shouldLink = true;
+                        }
+                        
+                        // For multimeters, match by branch location
+                        const Multimeter* multimeter = dynamic_cast<const Multimeter*>(devicePtr);
+                        if (multimeter && m->getFromBus() == multimeter->getFromBus() && 
+                            m->getToBus() == multimeter->getToBus()) {
+                            shouldLink = true;
+                        }
+                        
+                        if (shouldLink) {
+                            devicePtr->addMeasurement(m.get());
+                        }
+                    }
+                }
             }
         }
     }

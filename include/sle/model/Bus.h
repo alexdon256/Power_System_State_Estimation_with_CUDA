@@ -56,10 +56,6 @@ public:
     Real getGShunt() const { return gShunt_; }
     Real getBShunt() const { return bShunt_; }
     
-    void setVoltageLimits(Real vMin, Real vMax);
-    Real getVMin() const { return vMin_; }
-    Real getVMax() const { return vMax_; }
-    
     bool isZeroInjection() const;
     
     // Getters for computed voltage estimates (set by Solver::storeComputedValues)
@@ -117,9 +113,6 @@ private:
     
     Real gShunt_;
     Real bShunt_;
-    
-    Real vMin_;
-    Real vMax_;
     
     // Computed values (set by NetworkModel compute methods)
     Real vPU_;              // Voltage in per-unit (from state estimation)

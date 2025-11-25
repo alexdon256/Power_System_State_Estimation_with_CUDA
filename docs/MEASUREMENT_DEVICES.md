@@ -44,17 +44,18 @@ auto telemetry = sle::interface::MeasurementLoader::loadTelemetry(
     "measurements.csv", network
 );
 
-// Then load devices (measurements will be automatically linked)
+// Then load devices (measurements will be automatically linked by location matching)
+// Measurements are linked to devices based on:
+// - For voltmeters: matching busId
+// - For multimeters: matching fromBus/toBus
 sle::interface::MeasurementLoader::loadDevices(
     "devices.csv", *telemetry, network
 );
 
-// Devices are now linked to measurements via deviceId
+// Devices are now linked to measurements via location matching
+// Note: If measurements were loaded with deviceId in CSV but devices weren't loaded yet,
+// they will be linked when devices are loaded based on location matching
 ```
-
-## Overview
-
-Measurement devices represent physical equipment that produces measurements:
 
 ## Overview
 
@@ -99,20 +100,20 @@ telemetryData.addDevice(std::move(multimeter));
 auto pFlow = std::make_unique<MeasurementModel>(
     MeasurementType::P_FLOW,
     50.0,               // Measured value (already scaled by CT/PT)
-    0.5,                // Standard deviation
-    "MM-001"            // Device ID - links to multimeter
+    0.5                 // Standard deviation
 );
 pFlow->setBranchLocation(2, 3);
-telemetryData.addMeasurement(std::move(pFlow));
+// Pass device ID to addMeasurement for automatic linking
+telemetryData.addMeasurement(std::move(pFlow), "MM-001");
 
 auto qFlow = std::make_unique<MeasurementModel>(
     MeasurementType::Q_FLOW,
     10.0,
-    0.5,
-    "MM-001"            // Same device ID - both measurements from same multimeter
+    0.5
 );
 qFlow->setBranchLocation(2, 3);
-telemetryData.addMeasurement(std::move(qFlow));
+// Same device ID - both measurements from same multimeter
+telemetryData.addMeasurement(std::move(qFlow), "MM-001");
 ```
 
 ### Voltmeter
@@ -135,11 +136,11 @@ telemetryData.addDevice(std::move(voltmeter));
 auto vMag = std::make_unique<MeasurementModel>(
     MeasurementType::V_MAGNITUDE,
     1.05,               // Measured value (already scaled by PT)
-    0.01,               // Standard deviation
-    "VM-005"            // Device ID - links to voltmeter
+    0.01                // Standard deviation
 );
 vMag->setLocation(5);
-telemetryData.addMeasurement(std::move(vMag));
+// Pass device ID to addMeasurement for automatic linking
+telemetryData.addMeasurement(std::move(vMag), "VM-005");
 ```
 
 ## Querying Devices
@@ -264,16 +265,18 @@ telemetry.addDevice(std::move(multimeter));
 
 // 2. Add measurements from multimeter
 auto pFlow = std::make_unique<MeasurementModel>(
-    MeasurementType::P_FLOW, 50.0, 0.5, "MM-BR1"
+    MeasurementType::P_FLOW, 50.0, 0.5
 );
 pFlow->setBranchLocation(2, 3);
-telemetry.addMeasurement(std::move(pFlow));
+// Pass device ID to addMeasurement for automatic linking
+telemetry.addMeasurement(std::move(pFlow), "MM-BR1");
 
 auto qFlow = std::make_unique<MeasurementModel>(
-    MeasurementType::Q_FLOW, 10.0, 0.5, "MM-BR1"
+    MeasurementType::Q_FLOW, 10.0, 0.5
 );
 qFlow->setBranchLocation(2, 3);
-telemetry.addMeasurement(std::move(qFlow));
+// Same device ID - both measurements from same multimeter
+telemetry.addMeasurement(std::move(qFlow), "MM-BR1");
 
 // 3. Add voltmeter on bus 5
 auto voltmeter = std::make_unique<Voltmeter>(
@@ -283,20 +286,23 @@ telemetry.addDevice(std::move(voltmeter));
 
 // 4. Add voltage measurement from voltmeter
 auto vMag = std::make_unique<MeasurementModel>(
-    MeasurementType::V_MAGNITUDE, 1.05, 0.01, "VM-BUS5"
+    MeasurementType::V_MAGNITUDE, 1.05, 0.01
 );
 vMag->setLocation(5);
-telemetry.addMeasurement(std::move(vMag));
+// Pass device ID to addMeasurement for automatic linking
+telemetry.addMeasurement(std::move(vMag), "VM-BUS5");
 
 // 5. Query devices
-const Multimeter* mm = dynamic_cast<const Multimeter*>(
-    telemetry.getDevice("MM-BR1")
-);
-if (mm) {
-    std::cout << "Multimeter CT: " << mm->getCTRatio() << std::endl;
-    std::cout << "Multimeter PT: " << mm->getPTRatio() << std::endl;
-    std::cout << "Produces " << mm->getMeasurements().size() 
-              << " measurements" << std::endl;
+const auto& deviceMap = telemetry.getDevices();
+auto deviceIt = deviceMap.find("MM-BR1");
+if (deviceIt != deviceMap.end() && deviceIt->second) {
+    const Multimeter* mm = dynamic_cast<const Multimeter*>(deviceIt->second.get());
+    if (mm) {
+        std::cout << "Multimeter From Bus: " << mm->getFromBus() << std::endl;
+        std::cout << "Multimeter To Bus: " << mm->getToBus() << std::endl;
+        std::cout << "Produces " << mm->getMeasurements().size() 
+                  << " measurements" << std::endl;
+    }
 }
 ```
 
@@ -399,10 +405,11 @@ telemetry.addDevice(std::move(voltmeter));
 
 // Add voltage measurement
 auto vMag = std::make_unique<MeasurementModel>(
-    MeasurementType::V_MAGNITUDE, 1.05, 0.01, "VM-BUS5"
+    MeasurementType::V_MAGNITUDE, 1.05, 0.01
 );
 vMag->setLocation(5);
-telemetry.addMeasurement(std::move(vMag));
+// Pass device ID to addMeasurement for automatic linking
+telemetry.addMeasurement(std::move(vMag), "VM-BUS5");
 
 // Query telemetry from bus
 const Bus* bus = network.getBus(5);
@@ -423,24 +430,23 @@ if (!vMeasurements.empty()) {
 
 ### Real-Time Updates
 
-When telemetry is updated via `TelemetryProcessor`, buses and branches automatically see the updated values:
+When telemetry is updated via `TelemetryData`, buses and branches automatically see the updated values:
 
 ```cpp
-#include <sle/interface/TelemetryProcessor.h>
+#include <sle/model/TelemetryData.h>
 
 // Update a measurement
-TelemetryUpdate update;
+sle::model::TelemetryUpdate update;
 update.deviceId = "VM-001";
-update.type = MeasurementType::V_MAGNITUDE;
+update.type = sle::MeasurementType::V_MAGNITUDE;  // Required: device may have multiple measurements
 update.value = 1.05;  // New voltage value
 update.stdDev = 0.01;
 update.busId = 5;
 update.timestamp = getCurrentTimestamp();
 
 // Process the update
-TelemetryProcessor processor;
-processor.setTelemetryData(&telemetry);
-processor.updateMeasurement(update);
+telemetry->setNetworkModel(&network);
+telemetry->updateMeasurement(update);
 
 // Bus immediately sees the updated value
 const Bus* bus = network.getBus(5);

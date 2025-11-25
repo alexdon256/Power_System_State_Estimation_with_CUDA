@@ -43,7 +43,6 @@ set(SOURCES
     src/model/TelemetryData.cpp
     src/interface/ModelLoader.cpp
     src/interface/MeasurementLoader.cpp
-    src/interface/TelemetryProcessor.cpp
     src/interface/StateEstimator.cpp
     src/interface/Results.cpp
     src/io/IEEEFormatParser.cpp

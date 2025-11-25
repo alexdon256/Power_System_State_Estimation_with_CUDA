@@ -35,7 +35,6 @@ public:
     
     DeviceId getId() const { return id_; }
     const std::string& getName() const { return name_; }
-    void setName(const std::string& name) { name_ = name; }
     
     DeviceStatus getStatus() const { return status_; }
     void setStatus(DeviceStatus status) { status_ = status; }
@@ -72,31 +71,12 @@ public:
     Multimeter(DeviceId id, BranchId branchId, BusId fromBus, BusId toBus,
                Real ctRatio = 1.0, Real ptRatio = 1.0, const std::string& name = "");
     
-    BranchId getBranchId() const { return branchId_; }
     BusId getFromBus() const { return fromBus_; }
     BusId getToBus() const { return toBus_; }
-    
-    // Current Transformer (CT) ratio
-    Real getCTRatio() const { return ctRatio_; }
-    void setCTRatio(Real ratio) { ctRatio_ = ratio; }
-    
-    // Potential Transformer (PT) ratio
-    Real getPTRatio() const { return ptRatio_; }
-    void setPTRatio(Real ratio) { ptRatio_ = ratio; }
-    
-    // Get combined transformer ratio (CT * PT)
-    Real getTransformerRatio() const { return ctRatio_ * ptRatio_; }
-    
-    // Apply transformer ratios to raw measurement value
-    Real applyTransformerRatio(Real rawValue) const;
-    
-    // Reverse transformer ratios (for converting measured value back to raw)
-    Real reverseTransformerRatio(Real measuredValue) const;
     
     std::string getDeviceType() const override { return "Multimeter"; }
     
 private:
-    BranchId branchId_;
     BusId fromBus_;
     BusId toBus_;
     Real ctRatio_;   // Current Transformer ratio (e.g., 100:1 = 100.0)
@@ -109,16 +89,6 @@ public:
     Voltmeter(DeviceId id, BusId busId, Real ptRatio = 1.0, const std::string& name = "");
     
     BusId getBusId() const { return busId_; }
-    
-    // Potential Transformer (PT) ratio
-    Real getPTRatio() const { return ptRatio_; }
-    void setPTRatio(Real ratio) { ptRatio_ = ratio; }
-    
-    // Apply PT ratio to raw measurement value
-    Real applyPTRatio(Real rawValue) const;
-    
-    // Reverse PT ratio
-    Real reversePTRatio(Real measuredValue) const;
     
     std::string getDeviceType() const override { return "Voltmeter"; }
     

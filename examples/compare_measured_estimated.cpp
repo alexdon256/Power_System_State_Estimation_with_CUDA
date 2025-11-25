@@ -38,7 +38,7 @@
 #include <sle/StateEstimator.h>
 #include <sle/interface/ModelLoader.h>
 #include <sle/interface/MeasurementLoader.h>
-#include <sle/interface/TelemetryProcessor.h>
+#include <sle/model/TelemetryData.h>
 #include <sle/model/Bus.h>
 #include <sle/model/Branch.h>
 #include <sle/model/TelemetryData.h>
@@ -270,12 +270,10 @@ int main(int argc, char* argv[]) {
         // STEP 2.6: Update Telemetry Without Modifying Devices
         // ========================================================================
         std::cout << "=== Updating Telemetry (Without Device Changes) ===\n";
-        sle::interface::TelemetryProcessor processor;
-        processor.setTelemetryData(telemetry.get());
-        processor.setNetworkModel(network.get());
+        telemetry->setNetworkModel(network.get());
         
         // Example: Update some measurements
-        std::vector<sle::interface::TelemetryUpdate> updates;
+        std::vector<sle::model::TelemetryUpdate> updates;
         
         // Update voltage measurement (device stays the same, only value changes)
         sle::interface::TelemetryUpdate voltageUpdate;

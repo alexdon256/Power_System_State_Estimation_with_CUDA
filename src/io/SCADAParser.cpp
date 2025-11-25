@@ -47,11 +47,12 @@ std::unique_ptr<model::TelemetryData> SCADAParser::parse(const std::string& file
             Real stdDev = 0.01;  // Default uncertainty
             
             auto measurement = std::make_unique<model::MeasurementModel>(
-                type, value, stdDev, deviceId);
+                type, value, stdDev);
             measurement->setLocation(busId);
             measurement->setTimestamp(timestamp);
             
-            telemetry->addMeasurement(std::move(measurement));
+            // Pass deviceId to addMeasurement for automatic linking
+            telemetry->addMeasurement(std::move(measurement), deviceId);
         }
     }
     

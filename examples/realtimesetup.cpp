@@ -185,7 +185,7 @@ int main(int argc, char* argv[]) {
                 std::chrono::system_clock::now().time_since_epoch()).count();
             
             // Update measurement in real-time (thread-safe)
-            estimator.getTelemetryProcessor().updateMeasurement(update);
+            estimator.getTelemetryData()->updateMeasurement(update);
             
             // Run incremental estimation periodically
             // Incremental uses previous state as initial guess (faster convergence)

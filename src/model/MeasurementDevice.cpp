@@ -38,30 +38,14 @@ void MeasurementDevice::removeMeasurement(MeasurementModel* measurement) {
 Multimeter::Multimeter(DeviceId id, BranchId branchId, BusId fromBus, BusId toBus,
                        Real ctRatio, Real ptRatio, const std::string& name)
     : MeasurementDevice(id, name),
-      branchId_(branchId), fromBus_(fromBus), toBus_(toBus),
-      ctRatio_(ctRatio), ptRatio_(ptRatio) {
+      fromBus_(fromBus), toBus_(toBus), ctRatio_(ctRatio), ptRatio_(ptRatio) {
 }
 
-Real Multimeter::applyTransformerRatio(Real rawValue) const {
-    return rawValue * getTransformerRatio();
-}
-
-Real Multimeter::reverseTransformerRatio(Real measuredValue) const {
-    Real ratio = getTransformerRatio();
-    return (ratio > 0.0) ? measuredValue / ratio : measuredValue;
-}
 
 Voltmeter::Voltmeter(DeviceId id, BusId busId, Real ptRatio, const std::string& name)
     : MeasurementDevice(id, name), busId_(busId), ptRatio_(ptRatio) {
 }
 
-Real Voltmeter::applyPTRatio(Real rawValue) const {
-    return rawValue * ptRatio_;
-}
-
-Real Voltmeter::reversePTRatio(Real measuredValue) const {
-    return (ptRatio_ > 0.0) ? measuredValue / ptRatio_ : measuredValue;
-}
 
 } // namespace model
 } // namespace sle

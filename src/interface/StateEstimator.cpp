@@ -20,20 +20,18 @@ namespace interface {
 StateEstimator::StateEstimator() 
     : solver_(std::make_unique<math::Solver>()),
       modelUpdated_(true), telemetryUpdated_(true) {
-    telemetryProcessor_.setTelemetryData(telemetry_.get());
-    
-    // Set topology change callback
-    telemetryProcessor_.setTopologyChangeCallback([this]() {
-        markModelUpdated();
-    });
 }
 
 StateEstimator::~StateEstimator() = default;
 
 void StateEstimator::setNetwork(std::shared_ptr<model::NetworkModel> network) {
     network_ = network;
-    // Pass network to telemetry processor
-    telemetryProcessor_.setNetworkModel(network_.get());
+    
+    // Pass network to telemetry data for topology updates
+    if (telemetry_) {
+        telemetry_->setNetworkModel(network_.get());
+    }
+    
     markModelUpdated();
     
     // Reinitialize state if needed
@@ -48,7 +46,19 @@ std::shared_ptr<model::NetworkModel> StateEstimator::getNetwork() const {
 
 void StateEstimator::setTelemetryData(std::shared_ptr<model::TelemetryData> telemetry) {
     telemetry_ = telemetry;
-    telemetryProcessor_.setTelemetryData(telemetry_.get());
+    
+    // Set up topology change callback
+    if (telemetry_) {
+        telemetry_->setTopologyChangeCallback([this]() {
+            markModelUpdated();
+        });
+        
+        // Pass network if already set
+        if (network_) {
+            telemetry_->setNetworkModel(network_.get());
+        }
+    }
+    
     telemetryUpdated_.store(true);
 }
 

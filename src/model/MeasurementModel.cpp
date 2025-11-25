@@ -12,8 +12,7 @@ namespace model {
 
 MeasurementModel::MeasurementModel(MeasurementType type, Real value, Real stdDev)
     : type_(type), value_(value), stdDev_(stdDev), device_(nullptr),
-      busId_(-1), fromBus_(-1), toBus_(-1),
-      status_(MeasurementStatus::VALID), timestamp_(0) {
+      busId_(-1), fromBus_(-1), toBus_(-1), timestamp_(0) {
 }
 
 std::string MeasurementModel::getDeviceId() const {

@@ -32,33 +32,56 @@ The estimation pipeline runs asynchronously on CUDA streams:
 
 ```cpp
 #include <sle/interface/StateEstimator.h>
-#include <sle/interface/TelemetryProcessor.h>
+#include <sle/model/TelemetryData.h>
 
 // Initialize estimator
 sle::interface::StateEstimator estimator;
 estimator.setNetwork(network);
 estimator.setTelemetryData(telemetry);
 
-// Start real-time processing
-auto& processor = estimator.getTelemetryProcessor();
-processor.startRealTimeProcessing();
+// Configure telemetry for real-time updates
+auto telemetry = estimator.getTelemetryData();
+telemetry->setNetworkModel(network.get());
 
 // Update measurements on the fly
-sle::interface::TelemetryUpdate update;
+sle::model::TelemetryUpdate update;
 update.deviceId = "VM-001";
-update.type = sle::MeasurementType::V_MAGNITUDE;
+update.type = sle::MeasurementType::V_MAGNITUDE;  // Required: device may have multiple measurements
 update.value = 1.05;
 update.stdDev = 0.01;
 update.busId = 5;
 update.timestamp = getCurrentTimestamp();
-processor.updateMeasurement(update);
+telemetry->updateMeasurement(update);
 
 // Bus immediately sees updated value
 const Bus* bus = network->getBus(5);
-Real currentVoltage = bus->getCurrentVoltageMeasurement(telemetry);
+Real currentVoltage = bus->getCurrentVoltageMeasurement(*telemetry);
 
 // Run incremental estimation (faster)
 auto result = estimator.estimateIncremental();
+```
+
+### Circuit Breaker Status Updates
+
+Circuit breaker status measurements (`BREAKER_STATUS`) automatically update network topology:
+
+```cpp
+// Update breaker status (automatically updates branch status)
+sle::model::TelemetryUpdate breakerUpdate;
+breakerUpdate.deviceId = "BREAKER_1_2";
+breakerUpdate.type = sle::MeasurementType::BREAKER_STATUS;
+breakerUpdate.value = 1.0;  // 1.0 = closed, 0.0 = open
+breakerUpdate.stdDev = 0.01;
+breakerUpdate.fromBus = 1;
+breakerUpdate.toBus = 2;
+breakerUpdate.timestamp = getCurrentTimestamp();
+
+telemetry->updateMeasurement(breakerUpdate);
+// Branch status is automatically updated, topology change callback is triggered
+
+// The branch status is immediately updated
+Branch* branch = network->getBranchByBuses(1, 2);
+bool isClosed = branch->isOn();  // true if breaker is closed
 ```
 
 **Important**: All query methods query telemetry each time they're called, so they **always return the latest values**. Updates are immediately visible without caching.
@@ -66,9 +89,12 @@ auto result = estimator.estimateIncremental();
 ### Real-Time Loop Example
 
 ```cpp
+auto telemetry = estimator.getTelemetryData();
+telemetry->setNetworkModel(network.get());
+
 while (running) {
     // Receive telemetry updates from SCADA/PMU
-    sle::interface::TelemetryUpdate update;
+    sle::model::TelemetryUpdate update;
     update.deviceId = receiveDeviceId();
     update.type = receiveMeasurementType();
     update.value = receiveValue();
@@ -76,8 +102,8 @@ while (running) {
     update.busId = receiveBusId();
     update.timestamp = getCurrentTimestamp();
     
-    // Queue update
-    processor.updateMeasurement(update);
+    // Update measurement
+    telemetry->updateMeasurement(update);
     
     // Periodically run estimation
     if (shouldEstimate()) {
@@ -85,8 +111,6 @@ while (running) {
         processResult(result);
     }
 }
-
-processor.stopRealTimeProcessing();
 ```
 
 ## Dynamic Network Updates
@@ -161,43 +185,53 @@ if (bus) {
 ```cpp
 // Via TelemetryData directly
 auto measurement = std::make_unique<MeasurementModel>(
-    MeasurementType::V_MAGNITUDE, 1.05, 0.01, "PMU_001");
+    MeasurementType::V_MAGNITUDE, 1.05, 0.01);
 measurement->setLocation(1);
-telemetry->addMeasurement(std::move(measurement));
+// Pass device ID to addMeasurement for automatic linking
+telemetry->addMeasurement(std::move(measurement), "PMU_001");
 
-// Via TelemetryProcessor (queued)
-TelemetryUpdate update;
+// Via TelemetryData (real-time updates)
+sle::model::TelemetryUpdate update;
 update.deviceId = "PMU_001";
 update.type = MeasurementType::V_MAGNITUDE;
 update.value = 1.05;
 update.stdDev = 0.01;
 update.busId = 1;
-processor.addMeasurement(update);
+telemetry->addMeasurement(update);
 
 // Batch updates
-std::vector<TelemetryUpdate> updates = {...};
-processor.updateMeasurements(updates);
+std::vector<sle::model::TelemetryUpdate> updates = {...};
+telemetry->updateMeasurements(updates);
 ```
 
 ### Updating Measurements
 
 ```cpp
 // Update existing measurement by device ID
-TelemetryUpdate update;
+sle::model::TelemetryUpdate update;
 update.deviceId = "PMU_001";  // Must match existing device ID
+update.type = sle::MeasurementType::V_MAGNITUDE;  // Required: device may have multiple measurements
 update.value = 1.06;  // New value
 update.stdDev = 0.01;
-processor.updateMeasurement(update);
+update.busId = 1;  // Location information
+update.timestamp = getCurrentTimestamp();
+telemetry->updateMeasurement(update);
+
+// Alternative: Update by device ID and type directly
+// This method requires the measurement type since a device can have multiple measurements
+bool updated = telemetry->updateMeasurement("PMU_001", 
+                                            sle::MeasurementType::V_MAGNITUDE,
+                                            1.06, 0.01, getCurrentTimestamp());
 ```
 
 ### Removing Measurements
 
 ```cpp
-// Via TelemetryProcessor
-processor.removeMeasurement("PMU_001");
+// Remove all measurements from a device
+size_t removed = telemetry->removeAllMeasurementsFromDevice("PMU_001");
 
-// Via TelemetryData directly
-bool removed = telemetry->removeMeasurement("PMU_001");
+// Remove specific measurement by device ID and type
+bool removed = telemetry->removeMeasurement("PMU_001", MeasurementType::V_MAGNITUDE);
 ```
 
 ## Cache Invalidation
@@ -243,8 +277,8 @@ estimator.setNetwork(network);
 estimator.setTelemetryData(telemetry);
 estimator.configureForRealTime();
 
-auto& processor = estimator.getTelemetryProcessor();
-processor.startRealTimeProcessing();
+auto telemetry = estimator.getTelemetryData();
+telemetry->setNetworkModel(network.get());
 
 while (running) {
     // 1. Add new bus dynamically
@@ -266,17 +300,16 @@ while (running) {
     }
     
     // 4. Update measurement
-    TelemetryUpdate update;
+    sle::model::TelemetryUpdate update;
     update.deviceId = "PMU_999";
     update.type = MeasurementType::V_MAGNITUDE;
     update.value = 1.02;
     update.busId = 999;
-    processor.updateMeasurement(update);
+    telemetry->updateMeasurement(update);
     
     // 5. Process updates and re-estimate
     network->invalidateAdmittanceMatrix();
     estimator.markModelUpdated();
-    processor.processUpdateQueue();
     auto result = estimator.estimateIncremental();
 }
 ```

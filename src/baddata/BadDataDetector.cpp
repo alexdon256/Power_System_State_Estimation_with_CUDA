@@ -205,8 +205,8 @@ void BadDataDetector::removeBadMeasurements(model::TelemetryData& telemetry,
                     }
                     
                     // Only remove if device wasn't already removed
-                    if (!deviceAlreadyRemoved) {
-                        telemetry.removeMeasurement(m);
+                    if (!deviceAlreadyRemoved && m->getDevice()) {
+                        telemetry.removeMeasurement(m->getDevice()->getId(), m->getType());
                     }
                 }
             }

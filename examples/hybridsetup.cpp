@@ -239,7 +239,7 @@ int main(int argc, char* argv[]) {
             update.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
             
-            estimator.getTelemetryProcessor().updateMeasurement(update);
+            estimator.getTelemetryData()->updateMeasurement(update);
             
             // ====================================================================
             // STEP 8a: Fast Real-Time Estimation (Standard WLS) - Every Cycle

@@ -110,10 +110,11 @@ auto result = estimator.estimate();
 ### Real-Time Updates
 
 ```cpp
-// Get reference to telemetry processor for real-time updates
-// processor: TelemetryProcessor instance that handles asynchronous measurement updates
+// Get reference to telemetry data for real-time updates
+// telemetry: TelemetryData instance that handles measurement updates
 //           Provides measurement updates without full network reload
-auto& processor = estimator.getTelemetryProcessor();
+auto telemetry = estimator.getTelemetryData();
+telemetry->setNetworkModel(network.get());
 
 // Start real-time processing thread
 // Enables asynchronous measurement updates and background processing
@@ -138,14 +139,14 @@ update.timestamp = getCurrentTimestamp();        // Unix timestamp in millisecon
 
 // Update a single measurement in real-time
 // This updates the existing measurement if deviceId matches, or adds a new measurement
-processor.updateMeasurement(update);
+telemetry->updateMeasurement(update);
 
 // Batch update multiple measurements efficiently
 // updates: Vector of TelemetryUpdate structures to process
 //          More efficient than calling updateMeasurement() multiple times
 //          All updates are processed sequentially in a single call
 //          Useful for processing multiple SCADA/PMU updates at once
-std::vector<sle::interface::TelemetryUpdate> updates;
+std::vector<sle::model::TelemetryUpdate> updates;
 updates.push_back(update);  // Add first update
 
 // Add more updates
@@ -159,15 +160,18 @@ update2.timestamp = getCurrentTimestamp();
 updates.push_back(update2);
 
 // Process all updates in batch
-processor.updateMeasurements(updates);
+telemetry->updateMeasurements(updates);
 
 // Alternative: Update measurements directly via TelemetryData
 // deviceId: Device identifier (must match existing measurement)
+// type: Measurement type (required - device may have multiple measurements)
 // value: New measurement value
 // stdDev: New standard deviation
 // timestamp: Optional timestamp (default: -1, uses current time)
 // Returns: true if measurement was found and updated, false otherwise
-bool updated = telemetry->updateMeasurement("METER_001", 1.6, 0.01, getCurrentTimestamp());
+bool updated = telemetry->updateMeasurement("METER_001", 
+                                            sle::MeasurementType::P_INJECTION, 
+                                            1.6, 0.01, getCurrentTimestamp());
 if (updated) {
     std::cout << "Measurement updated successfully\n";
 }
