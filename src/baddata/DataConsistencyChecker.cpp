@@ -45,10 +45,10 @@ ConsistencyCheckResult DataConsistencyChecker::checkConsistency(
 bool DataConsistencyChecker::validateMeasurementRanges(
     const model::TelemetryData& telemetry) {
     
-    const auto& measurements = telemetry.getMeasurements();
+    auto measurements = telemetry.getMeasurements();
     
-    for (const auto& meas : measurements) {
-        if (!isMeasurementInRange(meas->getType(), meas->getValue())) {
+    for (const auto* meas : measurements) {
+        if (meas && !isMeasurementInRange(meas->getType(), meas->getValue())) {
             return false;
         }
     }
@@ -64,10 +64,10 @@ bool DataConsistencyChecker::checkCriticalMeasurements(
     BusId refBus = network.getReferenceBus();
     if (refBus >= 0) {
         bool hasRefVoltage = false;
-        const auto& measurements = telemetry.getMeasurements();
+        auto measurements = telemetry.getMeasurements();
         
-        for (const auto& meas : measurements) {
-            if (meas->getType() == MeasurementType::V_MAGNITUDE &&
+        for (const auto* meas : measurements) {
+            if (meas && meas->getType() == MeasurementType::V_MAGNITUDE &&
                 meas->getLocation() == refBus) {
                 hasRefVoltage = true;
                 break;
@@ -103,9 +103,10 @@ void DataConsistencyChecker::checkDuplicates(
     ConsistencyCheckResult& result) {
     
     std::set<std::string> deviceIds;
-    const auto& measurements = telemetry.getMeasurements();
+    auto measurements = telemetry.getMeasurements();
     
-    for (const auto& meas : measurements) {
+    for (const auto* meas : measurements) {
+        if (!meas) continue;
         const std::string& deviceId = meas->getDeviceId();
         if (deviceIds.count(deviceId) > 0) {
             result.warnings.push_back("Duplicate device ID: " + deviceId);

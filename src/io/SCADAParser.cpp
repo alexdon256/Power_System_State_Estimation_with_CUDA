@@ -7,9 +7,11 @@
 #include <sle/io/SCADAParser.h>
 #include <sle/model/TelemetryData.h>
 #include <sle/model/MeasurementModel.h>
+#include <sle/model/MeasurementDevice.h>
 #include <sle/Types.h>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 namespace sle {
 namespace io {
@@ -21,6 +23,17 @@ std::unique_ptr<model::TelemetryData> SCADAParser::parse(const std::string& file
     if (!file.is_open()) {
         throw std::runtime_error("Cannot open SCADA file: " + filepath);
     }
+    
+    // First pass: collect measurements grouped by device
+    struct MeasurementData {
+        MeasurementType type;
+        Real value;
+        Real stdDev;
+        BusId busId;
+        int64_t timestamp;
+    };
+    std::unordered_map<std::string, std::vector<MeasurementData>> deviceMeasurements;
+    std::unordered_map<std::string, BusId> deviceBusMap;  // Track bus for each device
     
     std::string line;
     while (std::getline(file, line)) {
@@ -46,13 +59,36 @@ std::unique_ptr<model::TelemetryData> SCADAParser::parse(const std::string& file
             
             Real stdDev = 0.01;  // Default uncertainty
             
-            auto measurement = std::make_unique<model::MeasurementModel>(
-                type, value, stdDev);
-            measurement->setLocation(busId);
-            measurement->setTimestamp(timestamp);
+            MeasurementData data;
+            data.type = type;
+            data.value = value;
+            data.stdDev = stdDev;
+            data.busId = busId;
+            data.timestamp = timestamp;
             
-            // Pass deviceId to addMeasurement for automatic linking
-            telemetry->addMeasurement(std::move(measurement), deviceId);
+            deviceMeasurements[deviceId].push_back(data);
+            deviceBusMap[deviceId] = busId;  // Store bus ID for device
+        }
+    }
+    
+    // Second pass: Create devices from topology, then add measurements
+    for (const auto& pair : deviceMeasurements) {
+        const std::string& deviceId = pair.first;
+        const auto& measurements = pair.second;
+        BusId busId = deviceBusMap[deviceId];
+        
+        // Create voltmeter device for this bus
+        auto voltmeter = std::make_unique<model::Voltmeter>(
+            deviceId, busId, 1.0, "SCADA Device " + deviceId
+        );
+        telemetry->addDevice(std::move(voltmeter));
+        
+        // Add measurements to device
+        for (const auto& measData : measurements) {
+            auto measurement = std::make_unique<model::MeasurementModel>(
+                measData.type, measData.value, measData.stdDev);
+            measurement->setTimestamp(measData.timestamp);
+            telemetry->addMeasurementToDevice(deviceId, std::move(measurement));
         }
     }
     

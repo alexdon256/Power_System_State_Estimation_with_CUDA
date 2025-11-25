@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
                 std::cout << busId << " ";
             }
             std::cout << "\n";
-            std::cout << "  Consider adding measurements or using pseudo measurements\n";
+            std::cout << "  Consider adding measurements\n";
         } else {
             std::cout << "✓ System is fully observable\n";
         }

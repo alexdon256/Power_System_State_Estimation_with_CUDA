@@ -61,9 +61,7 @@ Solver::Solver()
 
 Solver::~Solver() {
     // Free pinned memory buffers
-    if (h_pinned_z_) cudaFreeHost(h_pinned_z_);
-    if (h_pinned_weights_) cudaFreeHost(h_pinned_weights_);
-    if (h_pinned_state_) cudaFreeHost(h_pinned_state_);
+    if (h_pinned_unified_) cudaFreeHost(h_pinned_unified_);
     
     // Destroy handles (merged from CuSOLVERIntegration)
     if (cusparseHandle_) cusparseDestroy(cusparseHandle_);
@@ -133,29 +131,52 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
     }
     // Note: Derived quantity buffers (d_pMW, etc.) are optional and allocated on-demand
     
-    // OPTIMIZATION: Use pinned memory and async transfers with dedicated streams
-    // Allocate/ensure pinned memory buffers for frequently transferred data
-    cuda::allocatePinnedBuffer(h_pinned_z_, pinned_z_size_, nMeas);
-    cuda::allocatePinnedBuffer(h_pinned_weights_, pinned_weights_size_, nMeas);
-    cuda::allocatePinnedBuffer(h_pinned_state_, pinned_state_size_, nStates);
+    // OPTIMIZATION: Use unified pinned memory buffer for better performance (single allocation, better locality)
+    size_t totalPinnedSize = nMeas + nMeas + nStates;
+    cuda::allocatePinnedBuffer(h_pinned_unified_, pinned_unified_capacity_, totalPinnedSize);
+    
+    // Pointers into unified buffer
+    Real* z_pinned = h_pinned_unified_;
+    Real* weights_pinned = h_pinned_unified_ + nMeas;
+    Real* state_pinned = h_pinned_unified_ + 2 * nMeas;
     
     // Copy to pinned memory (fast CPU-side copy)
-    Real* z_src = h_pinned_z_ ? h_pinned_z_ : z.data();
-    Real* weights_src = h_pinned_weights_ ? h_pinned_weights_ : weights.data();
-    if (h_pinned_z_) std::copy(z.begin(), z.end(), h_pinned_z_);
-    if (h_pinned_weights_) std::copy(weights.begin(), weights.end(), h_pinned_weights_);
+    // OPTIMIZATION: OpenMP for large copies
+#ifdef USE_OPENMP
+    if (nMeas > 10000) {
+        #pragma omp parallel sections
+        {
+            #pragma omp section
+            std::copy(z.begin(), z.end(), z_pinned);
+            #pragma omp section
+            std::copy(weights.begin(), weights.end(), weights_pinned);
+            #pragma omp section
+            {
+                auto& stateVec = state.getStateVector();
+                std::copy(stateVec.begin(), stateVec.end(), state_pinned);
+            }
+        }
+    } else {
+        std::copy(z.begin(), z.end(), z_pinned);
+        std::copy(weights.begin(), weights.end(), weights_pinned);
+        auto& stateVec = state.getStateVector();
+        std::copy(stateVec.begin(), stateVec.end(), state_pinned);
+    }
+#else
+    std::copy(z.begin(), z.end(), z_pinned);
+    std::copy(weights.begin(), weights.end(), weights_pinned);
+    auto& stateVec = state.getStateVector();
+    std::copy(stateVec.begin(), stateVec.end(), state_pinned);
+#endif
     
     // Use dedicated transfer stream for memory transfers (can overlap with compute)
     cudaStream_t transferStream = transferStream_;
     
     // Launch async transfers on transfer stream (can overlap with compute operations)
-    CUDA_CHECK_THROW(cudaMemcpyAsync(memoryPool_.d_z, z_src, nMeas * sizeof(Real), cudaMemcpyHostToDevice, transferStream_));
-    CUDA_CHECK_THROW(cudaMemcpyAsync(memoryPool_.d_weights, weights_src, nMeas * sizeof(Real), cudaMemcpyHostToDevice, transferStream_));
-    
-    auto& stateVec = state.getStateVector();
-    Real* state_src = h_pinned_state_ ? h_pinned_state_ : stateVec.data();
-    if (h_pinned_state_) std::copy(stateVec.begin(), stateVec.end(), h_pinned_state_);
-    CUDA_CHECK_THROW(cudaMemcpyAsync(memoryPool_.d_x_old, state_src, nStates * sizeof(Real), cudaMemcpyHostToDevice, transferStream_));
+    // Note: GPU buffers are still separate, so multiple transfers needed, but source is now contiguous
+    CUDA_CHECK_THROW(cudaMemcpyAsync(memoryPool_.d_z, z_pinned, nMeas * sizeof(Real), cudaMemcpyHostToDevice, transferStream_));
+    CUDA_CHECK_THROW(cudaMemcpyAsync(memoryPool_.d_weights, weights_pinned, nMeas * sizeof(Real), cudaMemcpyHostToDevice, transferStream_));
+    CUDA_CHECK_THROW(cudaMemcpyAsync(memoryPool_.d_x_old, state_pinned, nStates * sizeof(Real), cudaMemcpyHostToDevice, transferStream_));
     
     // Synchronize transfer stream before using data in compute stream
     cudaStreamSynchronize(transferStream_);
@@ -184,14 +205,15 @@ SolverResult Solver::solve(StateVector& state, const NetworkModel& network,
         // Pass reuseStructure so MeasurementFunctions knows whether to re-upload static data
         // Note: For iterations > 0, we always reuse topology as it doesn't change within solve loop
         bool currentReuse = reuseStructure || (iter > 0);
-        Real* d_hx = measFuncs_->evaluateGPU(state, network, telemetry, currentReuse, stream);
+        
+        // OPTIMIZATION: Fused computation of h(x) and residuals in one kernel
+        // Passes pointers to z, weights, residual, weightedResidual
+        Real* d_hx = measFuncs_->evaluateGPU(state, network, telemetry, currentReuse, stream,
+                                            memoryPool_.d_z, memoryPool_.d_weights,
+                                            memoryPool_.d_residual, memoryPool_.d_weightedResidual);
         d_hx_final = d_hx;  // Keep reference to last computed hx
         
-        // Fused: Compute residual and weighted residual in one kernel
-        // OPTIMIZATION: Use compute stream for overlapping operations
-        sle::cuda::computeResidualAndWeighted(memoryPool_.d_z, d_hx, memoryPool_.d_weights,
-                                              memoryPool_.d_residual, memoryPool_.d_weightedResidual,
-                                              static_cast<Index>(nMeas), stream);
+        // Fused kernel computeResidualAndWeighted removed - now done inside evaluateGPU
         
         // Build Jacobian using shared CudaDataManager (reuses GPU data from MeasurementFunctions)
         // Structure already built, only values are recomputed
@@ -332,6 +354,10 @@ void Solver::storeComputedValues(model::StateVector& state, model::NetworkModel&
     const Real PI = 3.14159265359;
     const Real RAD_TO_DEG = 180.0 / PI;
     auto buses = network.getBuses();
+    // OPTIMIZATION: OpenMP parallelization for independent loop
+#ifdef USE_OPENMP
+    #pragma omp parallel for
+#endif
     for (size_t i = 0; i < nBuses && i < buses.size(); ++i) {
         Bus* bus = buses[i];
         Real vPU = state.getVoltageMagnitude(static_cast<Index>(i));

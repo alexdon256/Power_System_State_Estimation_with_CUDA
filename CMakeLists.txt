@@ -55,7 +55,6 @@ set(SOURCES
     src/baddata/BadDataDetector.cpp
     src/baddata/DataConsistencyChecker.cpp
     src/measurements/VirtualMeasurementGenerator.cpp
-    src/measurements/PseudoMeasurementGenerator.cpp
     src/utils/LoadDistributor.cpp
     src/multiarea/MultiAreaEstimator.cpp
     src/observability/OptimalPlacement.cpp

@@ -42,7 +42,7 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
     result.converged = false;
     result.iterations = 0;
     
-    const auto& measurements = telemetry.getMeasurements();
+    auto measurements = telemetry.getMeasurements();
     size_t nMeas = measurements.size();
     
     // OPTIMIZATION: Pre-compute base weights and stdDevs once (loop invariants)

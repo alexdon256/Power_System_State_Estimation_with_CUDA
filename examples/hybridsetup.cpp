@@ -119,7 +119,7 @@ int main(int argc, char* argv[]) {
                 std::cout << busId << " ";
             }
             std::cout << "\n";
-            std::cout << "  Consider adding measurements or using pseudo measurements\n";
+            std::cout << "  Consider adding measurements\n";
             
             // ====================================================================
             // STEP 3a: Optimal Measurement Placement (if not observable)

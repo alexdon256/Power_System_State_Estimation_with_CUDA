@@ -12,6 +12,11 @@ The State Estimation library provides a comprehensive API for power system state
 - **GPU Memory Optimization**: Memory pooling and cached device data for 5-20x GPU performance improvement
 - **Adjacency Lists**: O(1) branch connectivity queries for 10-100x faster network operations
 - **CPU Optimization**: OpenMP parallelization and SIMD vectorization
+- **Direct Pointer Linking**: Bus/Branch store direct device pointers, eliminating hash map lookups
+- **Fused Kernels**: Combined h(x) + residual computation in single GPU kernel
+- **Unified Pinned Buffers**: Single pinned memory buffer for z, weights, and state
+- **O(1) Branch Lookup**: Hash map for branch lookup by bus pair
+- **Memory Efficient**: Optimized for 2M+ measurements, 300K+ devices (~500 MB RAM, ~600 MB VRAM)
 - Convenience methods for easier usage (`configureForRealTime()`, `loadFromFiles()`, etc.)
 - Comparison reports for measured vs estimated values
 - 3-level multi-area hierarchy (Region → Area → Zone)
@@ -164,14 +169,11 @@ telemetry->updateMeasurements(updates);
 
 // Alternative: Update measurements directly via TelemetryData
 // deviceId: Device identifier (must match existing measurement)
-// type: Measurement type (required - device may have multiple measurements)
 // value: New measurement value
 // stdDev: New standard deviation
 // timestamp: Optional timestamp (default: -1, uses current time)
 // Returns: true if measurement was found and updated, false otherwise
-bool updated = telemetry->updateMeasurement("METER_001", 
-                                            sle::MeasurementType::P_INJECTION, 
-                                            1.6, 0.01, getCurrentTimestamp());
+bool updated = telemetry->updateMeasurement("METER_001", 1.6, 0.01, getCurrentTimestamp());
 if (updated) {
     std::cout << "Measurement updated successfully\n";
 }
@@ -239,17 +241,6 @@ auto telemetry = sle::interface::MeasurementLoader::loadFromCSV(
     "measurements.csv", *network);
 
 
-// Add pseudo measurements (load forecasts or historical patterns)
-// Pseudo measurements improve observability when real measurements are insufficient
-// forecasts: Vector of forecasted load values (one per bus, in p.u.)
-//            Used when actual measurements are missing or unreliable
-//            Typically have lower weight (higher stdDev) than real measurements
-// *telemetry: TelemetryData to modify (adds pseudo measurements)
-// *network: NetworkModel used to match forecasts to buses
-// Pseudo measurements help restore observability but are less accurate than real measurements
-std::vector<sle::Real> forecasts = {1.0, 1.2, 0.8, ...};  // Forecasted loads per bus (p.u.)
-sle::interface::MeasurementLoader::addPseudoMeasurements(
-    *telemetry, *network, forecasts);
 ```
 
 ## Observability Analysis

@@ -64,6 +64,8 @@ void computeAllPowerInjectionsGPU(const Real* v, const Real* theta,
 // Combined GPU kernel: Compute power injections/flows and evaluate measurements
 // All operations on GPU, data stays on GPU - eliminates host-device transfers
 // stream: Optional CUDA stream for asynchronous execution
+// OPTIMIZATION: Can optionally compute residuals (r = z - hx) and weighted residuals (Wr)
+// if z, weights, residual, and weightedResidual pointers are provided
 void computeMeasurementsGPU(
     const Real* v, const Real* theta,
     const DeviceBus* buses, const DeviceBranch* branches,
@@ -76,7 +78,11 @@ void computeMeasurementsGPU(
     Real* pFlow, Real* qFlow,
     Real* hx,
     Index nBuses, Index nBranches, Index nMeasurements,
-    cudaStream_t stream = nullptr);
+    cudaStream_t stream = nullptr,
+    const Real* z = nullptr,
+    const Real* weights = nullptr,
+    Real* residual = nullptr,
+    Real* weightedResidual = nullptr);
 
 // GPU-accelerated computation of MW/MVAR/I_PU/I_Amps from existing P/Q flows
 // Reuses P/Q flows already computed (e.g., during solver iterations) - no recomputation

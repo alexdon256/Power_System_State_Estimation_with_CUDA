@@ -33,27 +33,27 @@ public:
     void setDevice(MeasurementDevice* device) { device_ = device; }
     std::string getDeviceId() const;  // Get device ID from device pointer
     
-    void setLocation(BusId busId) { busId_ = busId; }
-    BusId getLocation() const { return busId_; }
-    
-    void setBranchLocation(BusId fromBus, BusId toBus);
-    BusId getFromBus() const { return fromBus_; }
-    BusId getToBus() const { return toBus_; }
+    // Location information is accessed through the device, not stored redundantly here
+    // Convenience methods to get location from device
+    BusId getLocation() const;  // Get bus ID (for voltmeter measurements) or -1 if branch measurement
+    BusId getFromBus() const;   // Get from bus ID (for multimeter measurements) or -1 if bus measurement
+    BusId getToBus() const;     // Get to bus ID (for multimeter measurements) or -1 if bus measurement
     
     void setTimestamp(int64_t timestamp) { timestamp_ = timestamp; }
     int64_t getTimestamp() const { return timestamp_; }
+    
+    void setGlobalIndex(Index index) { globalIndex_ = index; }
+    Index getGlobalIndex() const { return globalIndex_; }
     
 private:
     MeasurementType type_;
     Real value_;
     Real stdDev_;
     MeasurementDevice* device_;  // Pointer to device that produced this measurement
-    
-    BusId busId_;      // For bus measurements
-    BusId fromBus_;    // For branch measurements
-    BusId toBus_;      // For branch measurements
+    // Device knows its location - no need to store redundantly
     
     int64_t timestamp_;
+    Index globalIndex_ = -1;  // Global index in the measurement vector (for optimization)
 };
 
 } // namespace model

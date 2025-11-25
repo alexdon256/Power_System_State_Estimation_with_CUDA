@@ -66,6 +66,11 @@ public:
     Branch* getBranchByBuses(BusId fromBus, BusId toBus);
     const Branch* getBranchByBuses(BusId fromBus, BusId toBus) const;
     
+    // OPTIMIZED: Direct access to internal branch indices (no vector allocation)
+    const std::vector<Index>& getBranchIndicesFromBus(BusId busId) const;
+    const std::vector<Index>& getBranchIndicesToBus(BusId busId) const;
+    const Branch* getBranchByIndex(Index index) const;
+    
     // Base values
     void setBaseMVA(Real baseMVA) { baseMVA_ = baseMVA; }
     Real getBaseMVA() const { return baseMVA_; }

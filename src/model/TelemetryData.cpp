@@ -9,73 +9,201 @@
 #include <sle/model/NetworkModel.h>
 #include <algorithm>
 #include <unordered_set>
+#include <functional>
+
+#ifdef USE_OPENMP
+#include <omp.h>
+#endif
 
 namespace sle {
 namespace model {
 
 TelemetryData::TelemetryData() 
-    : network_(nullptr), latestTimestamp_(0) {
+    : network_(nullptr), latestTimestamp_(0), cachedMeasurementCount_(0), measurementCountDirty_(true) {
 }
 
-void TelemetryData::addMeasurement(std::unique_ptr<MeasurementModel> measurement, const std::string& deviceId) {
-    if (!measurement) return;
+std::vector<const MeasurementModel*> TelemetryData::getMeasurements() const {
+    std::vector<const MeasurementModel*> result;
     
-    // Handle BREAKER_STATUS separately (updates topology, not just telemetry)
-    if (measurement->getType() == MeasurementType::BREAKER_STATUS) {
-        if (network_) {
-            Branch* branch = nullptr;
-            if (measurement->getFromBus() >= 0 && measurement->getToBus() >= 0) {
-                branch = network_->getBranchByBuses(measurement->getFromBus(), measurement->getToBus());
-            } else if (measurement->getLocation() >= 0) {
-                branch = network_->getBranch(measurement->getLocation());
-            }
-            
-            if (branch) {
-                bool newStatus = (measurement->getValue() > 0.5);
-                if (branch->getStatus() != newStatus) {
-                    branch->setStatus(newStatus);
-                    if (onTopologyChange_) {
-                        onTopologyChange_();
-                    }
+    // Pre-allocate if we have cached count
+    if (!measurementCountDirty_) {
+        result.reserve(cachedMeasurementCount_);
+    }
+    
+    // Iterate through ordered devices for stable output
+    for (const auto* device : orderedDevices_) {
+        // Use iterator access instead of getMeasurements() to avoid vector creation
+        for (auto it = device->begin(); it != device->end(); ++it) {
+            result.push_back(it->get());
+        }
+    }
+    
+    return result;
+}
+
+size_t TelemetryData::getMeasurementCount() const {
+    if (measurementCountDirty_) {
+        cachedMeasurementCount_ = 0;
+        Index currentIndex = 0;
+        for (const auto* device : orderedDevices_) {
+            cachedMeasurementCount_ += device->size();
+            // Update global indices for stable mapping (e.g. for direct pinned buffer updates)
+            for (auto it = device->begin(); it != device->end(); ++it) {
+                if (*it) {
+                    (*it)->setGlobalIndex(currentIndex++);
                 }
             }
         }
+        measurementCountDirty_ = false;
+    }
+    return cachedMeasurementCount_;
+}
+
+void TelemetryData::addMeasurementToDevice(const std::string& deviceId, std::unique_ptr<MeasurementModel> measurement) {
+    if (!measurement || deviceId.empty()) return;
+    
+    auto deviceIt = devices_.find(deviceId);
+    if (deviceIt == devices_.end() || !deviceIt->second) {
+        return;
     }
     
-    // Link to device: prefer deviceId parameter, fallback to measurement's device pointer
-    MeasurementDevice* device = nullptr;
-    if (!deviceId.empty()) {
-        auto deviceIt = devices_.find(deviceId);
-        if (deviceIt != devices_.end() && deviceIt->second) {
-            device = deviceIt->second.get();
-        }
-    } else {
-        // Fallback to device pointer if already set in measurement
-        device = measurement->getDevice();
-    }
+    // Add measurement to device (device takes ownership)
+    deviceIt->second->addMeasurement(std::move(measurement));
+    measurementCountDirty_ = true;
+}
+
+MeasurementModel* TelemetryData::addMeasurement(MeasurementDevice* device, std::unique_ptr<MeasurementModel> measurement) {
+    if (!device || !measurement) return nullptr;
     
-    if (device) {
-        measurement->setDevice(device);
-        device->addMeasurement(measurement.get());
-    }
-    
-    measurements_.push_back(std::move(measurement));
+    MeasurementModel* meas = device->addMeasurement(std::move(measurement));
+    measurementCountDirty_ = true;
+    return meas;
+}
+
+MeasurementDevice* TelemetryData::getDevice(const std::string& deviceId) {
+    auto it = devices_.find(deviceId);
+    return (it != devices_.end()) ? it->second.get() : nullptr;
+}
+
+const MeasurementDevice* TelemetryData::getDevice(const std::string& deviceId) const {
+    auto it = devices_.find(deviceId);
+    return (it != devices_.end()) ? it->second.get() : nullptr;
 }
 
 void TelemetryData::getMeasurementVector(std::vector<Real>& z) const {
     z.clear();
-    z.reserve(measurements_.size());
-    for (const auto& m : measurements_) {
-        z.push_back(m->getValue());
+    // OPTIMIZATION: Iterate directly through devices without creating temporary vector
+    if (!measurementCountDirty_) {
+        z.reserve(cachedMeasurementCount_);
     }
+    
+    // OPTIMIZATION: Parallelize device iteration with OpenMP for large systems
+#ifdef USE_OPENMP
+    // Use stable orderedDevices_ list
+    // Parallelize measurement extraction
+    if (orderedDevices_.size() > 100) {  // Only parallelize for large systems
+        std::vector<std::vector<Real>> threadLocalZ(omp_get_max_threads());
+        #pragma omp parallel for
+        for (size_t i = 0; i < orderedDevices_.size(); ++i) {
+            int tid = omp_get_thread_num();
+            const auto* device = orderedDevices_[i];
+            for (auto it = device->begin(); it != device->end(); ++it) {
+                const MeasurementModel* m = it->get();
+                if (m) {
+                    threadLocalZ[tid].push_back(m->getValue());
+                }
+            }
+        }
+        
+        // Merge thread-local results
+        size_t totalSize = 0;
+        for (const auto& local : threadLocalZ) {
+            totalSize += local.size();
+        }
+        z.reserve(totalSize);
+        for (const auto& local : threadLocalZ) {
+            z.insert(z.end(), local.begin(), local.end());
+        }
+    } else {
+        // Sequential for small systems
+        for (const auto* device : orderedDevices_) {
+            for (auto it = device->begin(); it != device->end(); ++it) {
+                const MeasurementModel* m = it->get();
+                if (m) {
+                    z.push_back(m->getValue());
+                }
+            }
+        }
+    }
+#else
+    // Sequential fallback
+    for (const auto* device : orderedDevices_) {
+        for (auto it = device->begin(); it != device->end(); ++it) {
+            const MeasurementModel* m = it->get();
+            if (m) {
+                z.push_back(m->getValue());
+            }
+        }
+    }
+#endif
 }
 
 void TelemetryData::getWeightMatrix(std::vector<Real>& weights) const {
     weights.clear();
-    weights.reserve(measurements_.size());
-    for (const auto& m : measurements_) {
-        weights.push_back(m->getWeight());
+    // OPTIMIZATION: Iterate directly through devices without creating temporary vector
+    if (!measurementCountDirty_) {
+        weights.reserve(cachedMeasurementCount_);
     }
+    
+    // OPTIMIZATION: Parallelize device iteration with OpenMP for large systems
+#ifdef USE_OPENMP
+    // Use stable orderedDevices_ list
+    // Parallelize weight extraction
+    if (orderedDevices_.size() > 100) {  // Only parallelize for large systems
+        std::vector<std::vector<Real>> threadLocalWeights(omp_get_max_threads());
+        #pragma omp parallel for
+        for (size_t i = 0; i < orderedDevices_.size(); ++i) {
+            int tid = omp_get_thread_num();
+            const auto* device = orderedDevices_[i];
+            for (auto it = device->begin(); it != device->end(); ++it) {
+                const MeasurementModel* m = it->get();
+                if (m) {
+                    threadLocalWeights[tid].push_back(m->getWeight());
+                }
+            }
+        }
+        
+        // Merge thread-local results
+        size_t totalSize = 0;
+        for (const auto& local : threadLocalWeights) {
+            totalSize += local.size();
+        }
+        weights.reserve(totalSize);
+        for (const auto& local : threadLocalWeights) {
+            weights.insert(weights.end(), local.begin(), local.end());
+        }
+    } else {
+        // Sequential for small systems
+        for (const auto* device : orderedDevices_) {
+            for (auto it = device->begin(); it != device->end(); ++it) {
+                const MeasurementModel* m = it->get();
+                if (m) {
+                    weights.push_back(m->getWeight());
+                }
+            }
+        }
+    }
+#else
+    // Sequential fallback
+    for (const auto* device : orderedDevices_) {
+        for (auto it = device->begin(); it != device->end(); ++it) {
+            const MeasurementModel* m = it->get();
+            if (m) {
+                weights.push_back(m->getWeight());
+            }
+        }
+    }
+#endif
 }
 
 bool TelemetryData::removeMeasurement(const std::string& deviceId, MeasurementType type) {
@@ -87,26 +215,8 @@ bool TelemetryData::removeMeasurement(const std::string& deviceId, MeasurementTy
         return false;
     }
     
-    // Find measurement with matching type
-    const auto& deviceMeasurements = deviceIt->second->getMeasurements();
-    for (MeasurementModel* m : deviceMeasurements) {
-        if (m && m->getType() == type) {
-            // Unlink from device
-            deviceIt->second->removeMeasurement(m);
-            
-            // Remove from vector
-            auto it = std::find_if(measurements_.begin(), measurements_.end(),
-                [m](const std::unique_ptr<MeasurementModel>& ptr) {
-                    return ptr.get() == m;
-                });
-            if (it != measurements_.end()) {
-                measurements_.erase(it);
-                return true;
-            }
-        }
-    }
-    
-    return false;
+    // Remove measurement from device (device owns it)
+    return deviceIt->second->removeMeasurement(type);
 }
 
 size_t TelemetryData::removeAllMeasurementsFromDevice(const std::string& deviceId) {
@@ -117,31 +227,24 @@ size_t TelemetryData::removeAllMeasurementsFromDevice(const std::string& deviceI
         return 0;
     }
     
-    // Get all measurements from device (copy since we'll modify)
-    const auto& deviceMeasurements = deviceIt->second->getMeasurements();
-    if (deviceMeasurements.empty()) {
-        return 0;
+    // Get count before removal
+    size_t count = deviceIt->second->size();
+    
+    // Get all measurement types and remove them
+    std::vector<MeasurementType> typesToRemove;
+    typesToRemove.reserve(count);
+    for (auto it = deviceIt->second->begin(); it != deviceIt->second->end(); ++it) {
+        if (*it) {
+            typesToRemove.push_back((*it)->getType());
+        }
     }
     
-    // Create a set of pointers for O(1) lookup
-    std::unordered_set<MeasurementModel*> toRemoveSet(deviceMeasurements.begin(), deviceMeasurements.end());
+    // Remove all measurements
+    for (MeasurementType type : typesToRemove) {
+        deviceIt->second->removeMeasurement(type);
+    }
     
-    // Remove measurements using erase-remove idiom (more efficient than multiple erase calls)
-    size_t initialSize = measurements_.size();
-    measurements_.erase(
-        std::remove_if(measurements_.begin(), measurements_.end(),
-            [&toRemoveSet, deviceIt](const std::unique_ptr<MeasurementModel>& ptr) {
-                if (toRemoveSet.find(ptr.get()) != toRemoveSet.end()) {
-                    // Unlink from device before removing
-                    deviceIt->second->removeMeasurement(ptr.get());
-                    return true;
-                }
-                return false;
-            }),
-        measurements_.end()
-    );
-    
-    return initialSize - measurements_.size();
+    return count;
 }
 
 bool TelemetryData::updateMeasurement(const std::string& deviceId, MeasurementType type, Real value, Real stdDev, int64_t timestamp) {
@@ -152,41 +255,19 @@ bool TelemetryData::updateMeasurement(const std::string& deviceId, MeasurementTy
         return false;
     }
     
-    // Find measurement with matching type
-    const auto& deviceMeasurements = deviceIt->second->getMeasurements();
-    for (MeasurementModel* m : deviceMeasurements) {
-        if (m && m->getType() == type) {
-            m->setValue(value);
-            m->setStdDev(stdDev);
-            if (timestamp >= 0) {
-                m->setTimestamp(timestamp);
-            }
-            
-            // Handle BREAKER_STATUS separately (updates topology)
-            if (type == MeasurementType::BREAKER_STATUS && network_) {
-                Branch* branch = nullptr;
-                if (m->getFromBus() >= 0 && m->getToBus() >= 0) {
-                    branch = network_->getBranchByBuses(m->getFromBus(), m->getToBus());
-                } else if (m->getLocation() >= 0) {
-                    branch = network_->getBranch(m->getLocation());
-                }
-                
-                if (branch) {
-                    bool newStatus = (value > 0.5);
-                    if (branch->getStatus() != newStatus) {
-                        branch->setStatus(newStatus);
-                        if (onTopologyChange_) {
-                            onTopologyChange_();
-                        }
-                    }
-                }
-            }
-            
-            return true;
-        }
+    // Get measurement from device
+    MeasurementModel* m = deviceIt->second->getMeasurement(type);
+    if (!m) {
+        return false;
     }
     
-    return false;
+    m->setValue(value);
+    m->setStdDev(stdDev);
+    if (timestamp >= 0) {
+        m->setTimestamp(timestamp);
+    }
+    
+    return true;
 }
 
 
@@ -200,43 +281,19 @@ void TelemetryData::addDevice(std::unique_ptr<MeasurementDevice> device) {
     
     MeasurementDevice* devicePtr = device.get();
     devices_[deviceId] = std::move(device);
-    
-    // Link existing measurements to this device
-    // Measurements were created with deviceId but not linked yet
-    for (auto& m : measurements_) {
-        if (m && !m->getDevice()) {
-            // Check if measurement's location matches device location
-            bool shouldLink = false;
-            
-            // For voltmeters, check busId match
-            const Voltmeter* voltmeter = dynamic_cast<const Voltmeter*>(devicePtr);
-            if (voltmeter && m->getLocation() == voltmeter->getBusId()) {
-                shouldLink = true;
-            }
-            
-            // For multimeters, check branch location match
-            const Multimeter* multimeter = dynamic_cast<const Multimeter*>(devicePtr);
-            if (multimeter && m->getFromBus() == multimeter->getFromBus() && 
-                m->getToBus() == multimeter->getToBus()) {
-                shouldLink = true;
-            }
-            
-            if (shouldLink) {
-                devicePtr->addMeasurement(m.get());
-            }
-        }
-    }
+    orderedDevices_.push_back(devicePtr);  // Maintain stable order
+    updateDeviceIndices(devicePtr);
+    measurementCountDirty_ = true;
 }
 
 
 std::vector<const MeasurementDevice*> TelemetryData::getDevicesByBus(BusId busId) const {
     std::vector<const MeasurementDevice*> result;
-    for (const auto& pair : devices_) {
-        if (!pair.second) continue;
-        
-        const Voltmeter* voltmeter = dynamic_cast<const Voltmeter*>(pair.second.get());
-        if (voltmeter && voltmeter->getBusId() == busId) {
-            result.push_back(pair.second.get());
+    auto it = busToDevices_.find(busId);
+    if (it != busToDevices_.end()) {
+        result.reserve(it->second.size());
+        for (MeasurementDevice* dev : it->second) {
+            result.push_back(dev);
         }
     }
     return result;
@@ -244,21 +301,108 @@ std::vector<const MeasurementDevice*> TelemetryData::getDevicesByBus(BusId busId
 
 std::vector<const MeasurementDevice*> TelemetryData::getDevicesByBranch(BusId fromBus, BusId toBus) const {
     std::vector<const MeasurementDevice*> result;
-    for (const auto& pair : devices_) {
-        if (!pair.second) continue;
-        
-        const Multimeter* multimeter = dynamic_cast<const Multimeter*>(pair.second.get());
-        if (multimeter && 
-            ((multimeter->getFromBus() == fromBus && multimeter->getToBus() == toBus) ||
-             (multimeter->getFromBus() == toBus && multimeter->getToBus() == fromBus))) {
-            result.push_back(pair.second.get());
+    // Try both orderings
+    auto key1 = std::make_pair(fromBus, toBus);
+    auto key2 = std::make_pair(toBus, fromBus);
+    
+    auto it1 = branchToDevices_.find(key1);
+    if (it1 != branchToDevices_.end()) {
+        result.reserve(it1->second.size());
+        for (MeasurementDevice* dev : it1->second) {
+            result.push_back(dev);
         }
     }
+    
+    auto it2 = branchToDevices_.find(key2);
+    if (it2 != branchToDevices_.end() && it2 != it1) {
+        for (MeasurementDevice* dev : it2->second) {
+            result.push_back(dev);
+        }
+    }
+    
     return result;
+}
+
+void TelemetryData::updateDeviceIndices(MeasurementDevice* device) {
+    if (!device) return;
+    
+    const Voltmeter* voltmeter = dynamic_cast<const Voltmeter*>(device);
+    if (voltmeter) {
+        BusId busId = voltmeter->getBusId();
+        busToDevices_[busId].push_back(device);
+        // OPTIMIZATION: Add direct pointer to Bus
+        if (network_) {
+            Bus* bus = network_->getBus(busId);
+            if (bus) bus->addAssociatedDevice(device);
+        }
+        return;
+    }
+    
+    const Multimeter* multimeter = dynamic_cast<const Multimeter*>(device);
+    if (multimeter) {
+        auto key = std::make_pair(multimeter->getFromBus(), multimeter->getToBus());
+        branchToDevices_[key].push_back(device);
+        // OPTIMIZATION: Add direct pointer to Branch
+        if (network_) {
+            Branch* branch = network_->getBranchByBuses(multimeter->getFromBus(), multimeter->getToBus());
+            if (branch) branch->addAssociatedDevice(device);
+        }
+    }
+}
+
+void TelemetryData::removeDeviceFromIndices(MeasurementDevice* device) {
+    if (!device) return;
+    
+    const Voltmeter* voltmeter = dynamic_cast<const Voltmeter*>(device);
+    if (voltmeter) {
+        BusId busId = voltmeter->getBusId();
+        auto& devices = busToDevices_[busId];
+        devices.erase(std::remove(devices.begin(), devices.end(), device), devices.end());
+        if (devices.empty()) {
+            busToDevices_.erase(busId);
+        }
+        // OPTIMIZATION: Remove direct pointer from Bus
+        if (network_) {
+            Bus* bus = network_->getBus(busId);
+            if (bus) bus->removeAssociatedDevice(device);
+        }
+        return;
+    }
+    
+    const Multimeter* multimeter = dynamic_cast<const Multimeter*>(device);
+    if (multimeter) {
+        auto key = std::make_pair(multimeter->getFromBus(), multimeter->getToBus());
+        auto& devices = branchToDevices_[key];
+        devices.erase(std::remove(devices.begin(), devices.end(), device), devices.end());
+        if (devices.empty()) {
+            branchToDevices_.erase(key);
+        }
+        // OPTIMIZATION: Remove direct pointer from Branch
+        if (network_) {
+            Branch* branch = network_->getBranchByBuses(multimeter->getFromBus(), multimeter->getToBus());
+            if (branch) branch->removeAssociatedDevice(device);
+        }
+    }
 }
 
 void TelemetryData::setNetworkModel(NetworkModel* network) {
     network_ = network;
+    // If devices already exist, link them to the network
+    if (network_) {
+        for (auto* device : orderedDevices_) {
+            const Voltmeter* voltmeter = dynamic_cast<const Voltmeter*>(device);
+            if (voltmeter) {
+                Bus* bus = network_->getBus(voltmeter->getBusId());
+                if (bus) bus->addAssociatedDevice(device);
+                continue;
+            }
+            const Multimeter* multimeter = dynamic_cast<const Multimeter*>(device);
+            if (multimeter) {
+                Branch* branch = network_->getBranchByBuses(multimeter->getFromBus(), multimeter->getToBus());
+                if (branch) branch->addAssociatedDevice(device);
+            }
+        }
+    }
 }
 
 void TelemetryData::setTopologyChangeCallback(std::function<void()> callback) {
@@ -280,29 +424,6 @@ void TelemetryData::updateMeasurements(const std::vector<TelemetryUpdate>& updat
 }
 
 void TelemetryData::applyUpdate(const TelemetryUpdate& update) {
-    // Handle BREAKER_STATUS separately (updates topology, not telemetry)
-    if (update.type == MeasurementType::BREAKER_STATUS) {
-        if (network_) {
-            Branch* branch = nullptr;
-            if (update.fromBus >= 0 && update.toBus >= 0) {
-                branch = network_->getBranchByBuses(update.fromBus, update.toBus);
-            } else if (update.busId >= 0) {
-                branch = network_->getBranch(update.busId);
-            }
-            
-            if (branch) {
-                bool newStatus = (update.value > 0.5);
-                if (branch->getStatus() != newStatus) {
-                    branch->setStatus(newStatus);
-                    if (onTopologyChange_) {
-                        onTopologyChange_();
-                    }
-                }
-            }
-        }
-        return;
-    }
-
     // Find device
     MeasurementDevice* device = nullptr;
     if (!update.deviceId.empty()) {
@@ -318,33 +439,44 @@ void TelemetryData::applyUpdate(const TelemetryUpdate& update) {
         return;
     }
     
-    // Create new measurement
-    auto measurement = std::make_unique<MeasurementModel>(
-        update.type, update.value, update.stdDev);
-    
-    if (update.busId >= 0) {
-        measurement->setLocation(update.busId);
+    // Create new measurement and add to device
+    // Note: Location information is stored in the device, not in the measurement
+    if (device) {
+        auto measurement = std::make_unique<MeasurementModel>(
+            update.type, update.value, update.stdDev);
+        measurement->setTimestamp(update.timestamp);
+        latestTimestamp_ = update.timestamp;
+        
+        // Add to device (device takes ownership)
+        device->addMeasurement(std::move(measurement));
     }
-    if (update.fromBus >= 0 && update.toBus >= 0) {
-        measurement->setBranchLocation(update.fromBus, update.toBus);
-    }
-    measurement->setTimestamp(update.timestamp);
-    latestTimestamp_ = update.timestamp;
-    
-    // Pass deviceId to addMeasurement for automatic linking
-    addMeasurement(std::move(measurement), update.deviceId);
 }
 
 void TelemetryData::clear() {
-    // Unlink measurements from devices
-    for (auto& m : measurements_) {
-        if (m && m->getDevice()) {
-            m->getDevice()->removeMeasurement(m.get());
+    // Unlink from network first to avoid dangling pointers
+    if (network_) {
+        for (auto* device : orderedDevices_) {
+            const Voltmeter* voltmeter = dynamic_cast<const Voltmeter*>(device);
+            if (voltmeter) {
+                Bus* bus = network_->getBus(voltmeter->getBusId());
+                if (bus) bus->removeAssociatedDevice(device);
+                continue;
+            }
+            const Multimeter* multimeter = dynamic_cast<const Multimeter*>(device);
+            if (multimeter) {
+                Branch* branch = network_->getBranchByBuses(multimeter->getFromBus(), multimeter->getToBus());
+                if (branch) branch->removeAssociatedDevice(device);
+            }
         }
     }
     
-    measurements_.clear();
+    // Clear all devices (devices own measurements, so clearing devices clears measurements)
     devices_.clear();
+    orderedDevices_.clear();
+    busToDevices_.clear();
+    branchToDevices_.clear();
+    cachedMeasurementCount_ = 0;
+    measurementCountDirty_ = false;
     latestTimestamp_ = 0;
 }
 

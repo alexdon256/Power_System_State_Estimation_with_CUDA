@@ -13,6 +13,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <unordered_map>
 
 using sle::model::Multimeter;
 using sle::model::Voltmeter;
@@ -48,6 +49,18 @@ std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromCSV(
     std::string line;
     bool firstLine = true;
     
+    // First pass: collect measurement data (we'll create devices and add measurements in second pass)
+    struct MeasurementData {
+        std::string deviceId;
+        MeasurementType type;
+        Real value;
+        Real stdDev;
+        BusId busId;
+        BusId fromBus;
+        BusId toBus;
+    };
+    std::vector<MeasurementData> measurementData;
+    
     while (std::getline(file, line)) {
         if (firstLine) {
             firstLine = false;
@@ -73,7 +86,7 @@ std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromCSV(
         else if (typeStr == "Q_INJECTION") type = MeasurementType::Q_INJECTION;
         else if (typeStr == "V_MAGNITUDE") type = MeasurementType::V_MAGNITUDE;
         else if (typeStr == "I_MAGNITUDE") type = MeasurementType::I_MAGNITUDE;
-        else if (typeStr == "BREAKER_STATUS") type = MeasurementType::BREAKER_STATUS;
+        // BREAKER_STATUS is no longer a measurement type - use CircuitBreaker component instead
         else continue;
         
         Real value, stdDev;
@@ -115,16 +128,71 @@ std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromCSV(
             continue;  // Skip invalid values
         }
         
-        auto measurement = std::make_unique<model::MeasurementModel>(type, value, stdDev);
-        
-        if (fromBus >= 0 && toBus >= 0) {
-            measurement->setBranchLocation(fromBus, toBus);
-        } else if (busId >= 0) {
-            measurement->setLocation(busId);
+        MeasurementData data;
+        data.deviceId = deviceId;
+        data.type = type;
+        data.value = value;
+        data.stdDev = stdDev;
+        data.busId = busId;
+        data.fromBus = fromBus;
+        data.toBus = toBus;
+        measurementData.push_back(data);
+    }
+    
+    // Second pass: Create devices from topology, then add measurements
+    // Group measurements by device
+    std::unordered_map<std::string, std::vector<MeasurementData>> deviceMeasurements;
+    for (const auto& data : measurementData) {
+        if (!data.deviceId.empty()) {
+            deviceMeasurements[data.deviceId].push_back(data);
         }
+    }
+    
+    // Create devices and add measurements
+    for (const auto& pair : deviceMeasurements) {
+        const std::string& deviceId = pair.first;
+        const auto& measurements = pair.second;
         
-        // Pass deviceId to addMeasurement for automatic linking
-        telemetry->addMeasurement(std::move(measurement), deviceId);
+        if (measurements.empty()) continue;
+        
+        // Determine device type and location from first measurement
+        const auto& firstMeas = measurements[0];
+        bool isBranchMeasurement = (firstMeas.fromBus >= 0 && firstMeas.toBus >= 0);
+        
+        if (isBranchMeasurement) {
+            // Create multimeter device
+            const model::Branch* branch = network.getBranchByBuses(firstMeas.fromBus, firstMeas.toBus);
+            if (branch) {
+                auto multimeter = std::make_unique<model::Multimeter>(
+                    deviceId, branch->getId(), firstMeas.fromBus, firstMeas.toBus, 1.0, 1.0, deviceId
+                );
+                telemetry->addDevice(std::move(multimeter));
+                
+                // Add measurements to device
+                // Note: Location is stored in device (multimeter), not in measurement
+                for (const auto& measData : measurements) {
+                    auto measurement = std::make_unique<model::MeasurementModel>(
+                        measData.type, measData.value, measData.stdDev);
+                    telemetry->addMeasurementToDevice(deviceId, std::move(measurement));
+                }
+            }
+        } else {
+            // Create voltmeter device
+            if (firstMeas.busId >= 0) {
+                auto voltmeter = std::make_unique<model::Voltmeter>(
+                    deviceId, firstMeas.busId, 1.0, deviceId
+                );
+                telemetry->addDevice(std::move(voltmeter));
+                
+                // Add measurements to device
+                // Note: Location is stored in device (voltmeter), not in measurement
+                for (const auto& measData : measurements) {
+                    auto measurement = std::make_unique<model::MeasurementModel>(
+                        measData.type, measData.value, measData.stdDev);
+                    telemetry->addMeasurementToDevice(deviceId, std::move(measurement));
+                }
+            }
+        }
     }
     
     return telemetry;
@@ -138,22 +206,6 @@ std::unique_ptr<model::TelemetryData> MeasurementLoader::loadFromJSON(
     return telemetry;
 }
 
-
-void MeasurementLoader::addPseudoMeasurements(model::TelemetryData& telemetry,
-                                              const model::NetworkModel& network,
-                                              const std::vector<Real>& loadForecasts) {
-    auto buses = network.getBuses();
-    
-    for (size_t i = 0; i < buses.size() && i < loadForecasts.size(); ++i) {
-        // Add pseudo load measurements with low weight
-        Real stdDev = 0.1;  // High uncertainty for pseudo measurements
-        
-        auto pMeas = std::make_unique<model::MeasurementModel>(
-            MeasurementType::PSEUDO, loadForecasts[i], stdDev);
-        pMeas->setLocation(buses[i]->getId());
-        telemetry.addMeasurement(std::move(pMeas));
-    }
-}
 
 void MeasurementLoader::loadDevices(const std::string& filepath,
                                    model::TelemetryData& telemetry,
@@ -176,6 +228,7 @@ void MeasurementLoader::loadDevicesFromCSV(const std::string& filepath,
     std::string line;
     bool firstLine = true;
     
+    // Load devices from topology first
     while (std::getline(file, line)) {
         if (firstLine) {
             firstLine = false;
@@ -208,8 +261,6 @@ void MeasurementLoader::loadDevicesFromCSV(const std::string& filepath,
                 // Use defaults on parse error
             }
             
-            model::MeasurementDevice* devicePtr = nullptr;
-            
             if (deviceType == "MULTIMETER" || deviceType == "MM") {
                 // For multimeter, locationStr should be branchId or "fromBus:toBus"
                 std::istringstream locStream(locationStr);
@@ -233,7 +284,6 @@ void MeasurementLoader::loadDevicesFromCSV(const std::string& filepath,
                             deviceId, branch->getId(), fromBus, toBus, ctRatio, ptRatio, name
                         );
                         multimeter->setAccuracy(accuracy);
-                        devicePtr = multimeter.get();
                         telemetry.addDevice(std::move(multimeter));
                     }
                 } else {
@@ -251,7 +301,6 @@ void MeasurementLoader::loadDevicesFromCSV(const std::string& filepath,
                             ctRatio, ptRatio, name
                         );
                         multimeter->setAccuracy(accuracy);
-                        devicePtr = multimeter.get();
                         telemetry.addDevice(std::move(multimeter));
                     }
                 }
@@ -267,39 +316,12 @@ void MeasurementLoader::loadDevicesFromCSV(const std::string& filepath,
                     deviceId, busId, ptRatio, name
                 );
                 voltmeter->setAccuracy(accuracy);
-                devicePtr = voltmeter.get();
                 telemetry.addDevice(std::move(voltmeter));
-            }
-            
-            // Link existing measurements to this device by matching location
-            // This handles the case where measurements were loaded before devices
-            if (devicePtr) {
-                const auto& measurements = telemetry.getMeasurements();
-                for (const auto& m : measurements) {
-                    if (m && !m->getDevice()) {
-                        bool shouldLink = false;
-                        
-                        // For voltmeters, match by busId
-                        const Voltmeter* voltmeter = dynamic_cast<const Voltmeter*>(devicePtr);
-                        if (voltmeter && m->getLocation() == voltmeter->getBusId()) {
-                            shouldLink = true;
-                        }
-                        
-                        // For multimeters, match by branch location
-                        const Multimeter* multimeter = dynamic_cast<const Multimeter*>(devicePtr);
-                        if (multimeter && m->getFromBus() == multimeter->getFromBus() && 
-                            m->getToBus() == multimeter->getToBus()) {
-                            shouldLink = true;
-                        }
-                        
-                        if (shouldLink) {
-                            devicePtr->addMeasurement(m.get());
-                        }
-                    }
-                }
             }
         }
     }
+    // Devices are now created from topology
+    // Measurements should be added to devices separately via addMeasurementToDevice
 }
 
 } // namespace interface

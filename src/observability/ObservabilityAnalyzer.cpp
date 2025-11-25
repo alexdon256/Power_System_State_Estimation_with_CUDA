@@ -46,8 +46,9 @@ std::vector<ObservableSubsystem> ObservabilityAnalyzer::analyzeObservability(
             // Check if subsystem is observable
             // Simplified: check if there are enough measurements
             size_t measCount = 0;
-            for (const auto& meas : telemetry.getMeasurements()) {
-                if (component.count(meas->getLocation()) > 0) {
+            auto measurements = telemetry.getMeasurements();
+            for (const auto* meas : measurements) {
+                if (meas && component.count(meas->getLocation()) > 0) {
                     measCount++;
                 }
             }

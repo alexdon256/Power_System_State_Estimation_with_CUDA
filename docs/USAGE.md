@@ -85,9 +85,8 @@ telemetry->setNetworkModel(network.get());
 // Update measurements on the fly
 sle::model::TelemetryUpdate update;
 update.deviceId = "METER_1";
-update.type = sle::MeasurementType::P_INJECTION;  // Required: device may have multiple measurements
+update.type = sle::MeasurementType::P_INJECTION;
 update.value = 1.5;
-update.stdDev = 0.01;  // Standard deviation
 update.busId = 1;
 update.timestamp = getCurrentTimestamp();
 telemetry->updateMeasurement(update);

@@ -456,6 +456,8 @@ Real currentVoltage = bus->getCurrentVoltageMeasurement(telemetry);
 
 **Important**: All query methods (`getMeasurementsFromDevices()`, `getCurrentVoltageMeasurement()`, etc.) query telemetry each time they're called, so they **always return the latest values**. There's no caching - updates are immediately visible.
 
+**Performance Note**: The system uses direct pointer linking for optimal performance. `Bus` and `Branch` objects store direct pointers to their associated `MeasurementDevice` objects, eliminating hash map lookups. This provides O(1) access to devices and measurements.
+
 ### Convenience Methods for Current Values
 
 Buses and branches provide convenience methods to get current measurement values directly:

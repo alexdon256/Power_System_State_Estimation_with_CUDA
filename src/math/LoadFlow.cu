@@ -10,6 +10,7 @@
 #include <sle/model/StateVector.h>
 #include <sle/model/TelemetryData.h>
 #include <sle/model/MeasurementModel.h>
+#include <sle/model/MeasurementDevice.h>
 #include <sle/model/Bus.h>
 #include <sle/Types.h>
 #include <cmath>
@@ -49,21 +50,26 @@ LoadFlowResult LoadFlow::solve(const model::NetworkModel& network, const model::
     for (const auto* bus : buses) {
         if (!bus) continue;
         
+        // Create pseudo device for load flow measurements
+        std::string deviceId = "PF_" + std::to_string(bus->getId());
+        auto voltmeter = std::make_unique<model::Voltmeter>(
+            deviceId, bus->getId(), 1.0, "Load Flow Pseudo Device Bus " + std::to_string(bus->getId())
+        );
+        telemetry.addDevice(std::move(voltmeter));
+        
         if (bus->getType() == model::BusType::Slack) {
             // Slack Bus: Fixed V and Theta
             // V_mag measurement
             auto measV = std::make_unique<model::MeasurementModel>(
                 model::MeasurementType::V_MAGNITUDE, bus->getVoltageMagnitude(), pfStdDev);
-            measV->setLocation(bus->getId());
-            telemetry.addMeasurement(std::move(measV));
+            telemetry.addMeasurementToDevice(deviceId, std::move(measV));
             
             // Angle measurement (V_ANGLE) to fix reference
             // Assuming 0 degrees for Slack unless specified otherwise (usually 0 in NetworkModel)
             Real angle = bus->getVoltageAngle(); // Usually 0
             auto measAng = std::make_unique<model::MeasurementModel>(
                 model::MeasurementType::V_ANGLE, angle, pfStdDev);
-            measAng->setLocation(bus->getId());
-            telemetry.addMeasurement(std::move(measAng));
+            telemetry.addMeasurementToDevice(deviceId, std::move(measAng));
             
         } else if (bus->getType() == model::BusType::PV) {
             // PV Bus: Fixed P and V
@@ -71,14 +77,12 @@ LoadFlowResult LoadFlow::solve(const model::NetworkModel& network, const model::
             Real pInj = bus->getPGeneration() - bus->getPLoad();
             auto measP = std::make_unique<model::MeasurementModel>(
                 model::MeasurementType::P_INJECTION, pInj, pfStdDev);
-            measP->setLocation(bus->getId());
-            telemetry.addMeasurement(std::move(measP));
+            telemetry.addMeasurementToDevice(deviceId, std::move(measP));
             
             // V_mag measurement
             auto measV = std::make_unique<model::MeasurementModel>(
                 model::MeasurementType::V_MAGNITUDE, bus->getVoltageMagnitude(), pfStdDev);
-            measV->setLocation(bus->getId());
-            telemetry.addMeasurement(std::move(measV));
+            telemetry.addMeasurementToDevice(deviceId, std::move(measV));
             
         } else {
             // PQ Bus: Fixed P and Q
@@ -86,15 +90,13 @@ LoadFlowResult LoadFlow::solve(const model::NetworkModel& network, const model::
             Real pInj = bus->getPGeneration() - bus->getPLoad();
             auto measP = std::make_unique<model::MeasurementModel>(
                 model::MeasurementType::P_INJECTION, pInj, pfStdDev);
-            measP->setLocation(bus->getId());
-            telemetry.addMeasurement(std::move(measP));
+            telemetry.addMeasurementToDevice(deviceId, std::move(measP));
             
             // Q_injection = Q_gen - Q_load
             Real qInj = bus->getQGeneration() - bus->getQLoad();
             auto measQ = std::make_unique<model::MeasurementModel>(
                 model::MeasurementType::Q_INJECTION, qInj, pfStdDev);
-            measQ->setLocation(bus->getId());
-            telemetry.addMeasurement(std::move(measQ));
+            telemetry.addMeasurementToDevice(deviceId, std::move(measQ));
         }
     }
     

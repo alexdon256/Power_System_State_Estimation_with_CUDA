@@ -52,6 +52,7 @@ Complete guide to all documentation in the State Estimation project.
 - **CPU Parallelization**: 4-8x speedup with OpenMP
 - **10,000 Bus Systems**: 20-50x overall, 100-500 ms per cycle (real-time capable)
 - **Memory Pool**: 100-500x faster allocations (reuses memory)
+- **Optimizations**: Direct pointer linking, fused kernels, unified buffers, O(1) lookups
 
 ## Examples
 

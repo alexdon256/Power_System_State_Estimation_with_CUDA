@@ -92,74 +92,104 @@ Bus& Bus::operator=(const Bus& other) {
     return *this;
 }
 
+void Bus::addAssociatedDevice(MeasurementDevice* device) {
+    if (!device) return;
+    // Check for duplicates
+    for (auto* d : associatedDevices_) {
+        if (d == device) return;
+    }
+    associatedDevices_.push_back(device);
+}
+
+void Bus::removeAssociatedDevice(MeasurementDevice* device) {
+    if (!device) return;
+    for (auto it = associatedDevices_.begin(); it != associatedDevices_.end(); ++it) {
+        if (*it == device) {
+            associatedDevices_.erase(it);
+            return;
+        }
+    }
+}
+
 std::vector<const MeasurementDevice*> Bus::getAssociatedDevices(const TelemetryData& telemetry) const {
-    return telemetry.getDevicesByBus(id_);
+    // Legacy support - construct vector from local storage
+    std::vector<const MeasurementDevice*> result;
+    result.reserve(associatedDevices_.size());
+    for (auto* device : associatedDevices_) {
+        result.push_back(device);
+    }
+    return result;
 }
 
 std::vector<const MeasurementModel*> Bus::getMeasurementsFromDevices(const TelemetryData& telemetry) const {
+    // OPTIMIZATION: Use local associatedDevices_ (no lookup)
+    // Telemetry argument ignored but kept for API compatibility
     std::vector<const MeasurementModel*> result;
-    auto devices = getAssociatedDevices(telemetry);
-    // Pre-allocate capacity for efficiency
     size_t totalMeasurements = 0;
-    for (const auto* device : devices) {
-        totalMeasurements += device->getMeasurements().size();
+    for (const auto* device : associatedDevices_) {
+        totalMeasurements += device->size();
     }
     result.reserve(totalMeasurements);
     
-    for (const auto* device : devices) {
-        const auto& measurements = device->getMeasurements();
-        result.insert(result.end(), measurements.begin(), measurements.end());
+    for (const auto* device : associatedDevices_) {
+        for (auto it = device->begin(); it != device->end(); ++it) {
+            result.push_back(it->get());
+        }
     }
     return result;
 }
 
 std::vector<const MeasurementModel*> Bus::getMeasurementsFromDevices(const TelemetryData& telemetry, MeasurementType type) const {
+    // OPTIMIZATION: Use local associatedDevices_ (no lookup)
     std::vector<const MeasurementModel*> result;
-    auto devices = getAssociatedDevices(telemetry);
-    // Pre-allocate capacity estimate
-    result.reserve(devices.size());
+    result.reserve(associatedDevices_.size());
     
-    for (const auto* device : devices) {
-        const auto& measurements = device->getMeasurements();
-        for (const auto* measurement : measurements) {
-            if (measurement->getType() == type) {
-                result.push_back(measurement);
-            }
+    for (const auto* device : associatedDevices_) {
+        const MeasurementModel* meas = device->getMeasurement(type);
+        if (meas) {
+            result.push_back(meas);
         }
     }
     return result;
 }
 
 Real Bus::getCurrentVoltageMeasurement(const TelemetryData& telemetry) const {
-    auto measurements = getMeasurementsFromDevices(telemetry, MeasurementType::V_MAGNITUDE);
-    if (!measurements.empty()) {
-        // Return the most recent measurement (if multiple devices)
-        // In practice, there's usually one voltmeter per bus
-        return measurements[0]->getValue();
+    // OPTIMIZATION: Use local associatedDevices_ (no lookup)
+    for (const auto* device : associatedDevices_) {
+        const MeasurementModel* meas = device->getMeasurement(MeasurementType::V_MAGNITUDE);
+        if (meas) {
+            return meas->getValue();
+        }
     }
     return std::numeric_limits<Real>::quiet_NaN();
 }
 
 bool Bus::getCurrentPowerInjections(const TelemetryData& telemetry, Real& pInjection, Real& qInjection) const {
-    auto pMeasurements = getMeasurementsFromDevices(telemetry, MeasurementType::P_INJECTION);
-    auto qMeasurements = getMeasurementsFromDevices(telemetry, MeasurementType::Q_INJECTION);
+    // OPTIMIZATION: Use local associatedDevices_ (no lookup)
+    bool foundP = false, foundQ = false;
     
-    bool found = false;
-    if (!pMeasurements.empty()) {
-        pInjection = pMeasurements[0]->getValue();
-        found = true;
-    } else {
-        pInjection = 0.0;
+    for (const auto* device : associatedDevices_) {
+        if (!foundP) {
+            const MeasurementModel* pMeas = device->getMeasurement(MeasurementType::P_INJECTION);
+            if (pMeas) {
+                pInjection = pMeas->getValue();
+                foundP = true;
+            }
+        }
+        if (!foundQ) {
+            const MeasurementModel* qMeas = device->getMeasurement(MeasurementType::Q_INJECTION);
+            if (qMeas) {
+                qInjection = qMeas->getValue();
+                foundQ = true;
+            }
+        }
+        if (foundP && foundQ) break;
     }
     
-    if (!qMeasurements.empty()) {
-        qInjection = qMeasurements[0]->getValue();
-        found = true;
-    } else {
-        qInjection = 0.0;
-    }
+    if (!foundP) pInjection = 0.0;
+    if (!foundQ) qInjection = 0.0;
     
-    return found;
+    return foundP || foundQ;
 }
 
 } // namespace model

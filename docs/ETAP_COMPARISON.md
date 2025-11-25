@@ -15,7 +15,6 @@
 | Observability analysis | ✅ | ✅ | **Equivalent** |
 | Non-observable subsystem detection | ✅ | ✅ | **Equivalent** |
 | Virtual measurements | ✅ | ✅ | **Equivalent** |
-| Pseudo measurements | ✅ | ✅ | **Equivalent** |
 | **Bad Data Detection** |
 | Chi-square test | ✅ | ✅ | **Equivalent** |
 | Largest normalized residual | ✅ | ✅ | **Equivalent** |

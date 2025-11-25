@@ -106,13 +106,19 @@ Index findBranchIndex(const model::NetworkModel& network,
                      BusId fromBus, BusId toBus) {
     if (fromBus < 0 || toBus < 0) return -1;
     
-    auto brList = network.getBranches();
-    for (const auto* br : brList) {
-        if ((br->getFromBus() == fromBus && br->getToBus() == toBus) ||
-            (br->getFromBus() == toBus && br->getToBus() == fromBus)) {
-            return network.getBranchIndex(br->getId());
-        }
+    // OPTIMIZATION: Use O(1) lookup via getBranchByBuses instead of O(n) linear search
+    // Check both directions (fromBus->toBus and toBus->fromBus)
+    const model::Branch* branch = network.getBranchByBuses(fromBus, toBus);
+    if (branch) {
+        return network.getBranchIndex(branch->getId());
     }
+    
+    // Try reverse direction (some branches may be stored in reverse)
+    branch = network.getBranchByBuses(toBus, fromBus);
+    if (branch) {
+        return network.getBranchIndex(branch->getId());
+    }
+    
     return -1;
 }
 

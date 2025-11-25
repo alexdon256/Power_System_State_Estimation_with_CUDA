@@ -70,8 +70,12 @@ public:
     Real getPInjectionMW() const { return pInjectionMW_; }    // P injection in MW
     Real getQInjectionMVAR() const { return qInjectionMVAR_; } // Q injection in MVAR
     
-    // Get telemetry from associated devices (requires TelemetryData reference)
+    // Get telemetry from associated devices
     // Returns all devices (voltmeters) associated with this bus
+    // OPTIMIZATION: Returns direct pointers stored in Bus object (no lookup)
+    const std::vector<MeasurementDevice*>& getAssociatedDevices() const { return associatedDevices_; }
+    
+    // Legacy method support (deprecated)
     std::vector<const MeasurementDevice*> getAssociatedDevices(const TelemetryData& telemetry) const;
     
     // Get all measurements from devices associated with this bus
@@ -94,10 +98,16 @@ public:
     bool getCurrentPowerInjections(const TelemetryData& telemetry, Real& pInjection, Real& qInjection) const;
     
 private:
-    // Internal setters (used by NetworkModel)
+    // Internal setters (used by NetworkModel / TelemetryData)
     friend class NetworkModel;
+    friend class TelemetryData;  // Allow TelemetryData to update associatedDevices_
+    
     void setVoltEstimates(Real vPU, Real vKV, Real thetaRad, Real thetaDeg);
     void setPowerInjections(Real pInj, Real qInj, Real pMW, Real qMVAR);
+    
+    void addAssociatedDevice(MeasurementDevice* device);
+    void removeAssociatedDevice(MeasurementDevice* device);
+    
     BusId id_;
     std::string name_;
     BusType type_;
@@ -113,6 +123,9 @@ private:
     
     Real gShunt_;
     Real bShunt_;
+    
+    // OPTIMIZATION: Direct pointers to associated devices (avoids map lookup)
+    std::vector<MeasurementDevice*> associatedDevices_;
     
     // Computed values (set by NetworkModel compute methods)
     Real vPU_;              // Voltage in per-unit (from state estimation)

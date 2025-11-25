@@ -39,7 +39,7 @@ After running the setup, **restart your IDE** or reload the window to ensure cod
 - **Telemetry Processing**: Support for SCADA and PMU data with asynchronous updates
 - **Observability Analysis**: Advanced observability with optimal measurement placement
 - **Bad Data Detection**: Chi-square test and largest normalized residual methods
-- **Virtual & Pseudo Measurements**: Automatic generation for observability restoration
+- **Virtual Measurements**: Automatic generation for observability restoration
 - **Multi-Area Support**: 3-level hierarchy (Region → Area → Zone) for large systems
   - Hierarchical and distributed estimation
   - Parallel processing across zones/areas/regions

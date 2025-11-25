@@ -38,6 +38,12 @@ All intensive operations run on GPU using CUDA, cuSPARSE, and cuSOLVER:
 8. **Zero-Copy Topology Reuse**: Skip re-uploading static network data (topology) for real-time updates, reducing PCIe bandwidth usage by 90%+.
 9. **Cached Descriptors**: Reuse `cusparseSpMatDescr_t` and `cusparseDnVecDescr_t` to avoid overhead.
 10. **IRLS Optimization**: Reuse residuals and weights vectors between Robust Estimator iterations.
+11. **Fused Measurement Kernel**: Combined h(x) + residual + weighted residual computation in single kernel launch, eliminating separate kernel overhead.
+12. **Unified Pinned Buffer**: Single pinned memory buffer for z, weights, and state, reducing `cudaHostAlloc` overhead and improving data locality.
+13. **Direct Pointer Linking**: Bus/Branch store direct device pointers, eliminating hash map lookups in measurement access paths.
+14. **O(1) Branch Lookup**: Hash map for branch lookup by bus pair, replacing O(n) linear search.
+15. **Stable Measurement Ordering**: Deterministic iteration order ensures consistent results across runs.
+16. **OpenMP Parallelization**: Parallelized measurement vector extraction and result storage loops for large systems.
 
 ### CPU Optimizations
 
@@ -102,8 +108,32 @@ nsys profile --trace=cuda,nvtx ./your_executable
 ncu --kernel computePowerFlowPQ --set full ./your_executable
 ```
 
+## Memory Usage
+
+### Quick Reference
+
+**For 2,000,000 measurements and 300,000 devices:**
+- **RAM**: ~450-500 MB
+- **VRAM**: ~580-600 MB
+- **Peak RAM**: ~450 MB
+- **Peak VRAM**: ~620 MB
+
+**Scaling factors:**
+- Measurements: ~48 bytes per measurement (RAM), ~12 bytes per measurement (VRAM)
+- Devices: ~310 bytes per device (RAM), minimal VRAM
+- Buses: ~216 bytes per bus (RAM), ~24 bytes per bus (VRAM)
+- Branches: ~152 bytes per branch (RAM), ~48 bytes per branch (VRAM)
+
+**Memory optimizations:**
+- Direct pointer linking reduces lookup overhead
+- Unified pinned buffers reduce allocation overhead
+- Memory pools reuse GPU buffers across iterations
+- Sparse matrix formats minimize storage for large systems
+
 ## Requirements
 
 - **CUDA Toolkit**: 12.0+ (12.1+ recommended)
 - **GPU**: NVIDIA GPU with compute capability 7.5+ (Turing, Ampere, Ada, Hopper)
-- **Memory**: Sufficient GPU memory for your system size
+- **Memory**: 
+  - **RAM**: 1 GB minimum, 2 GB recommended, 4 GB+ for production
+  - **VRAM**: 1 GB minimum, 2 GB recommended, 4 GB+ for production

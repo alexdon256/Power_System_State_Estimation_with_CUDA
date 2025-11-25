@@ -5,23 +5,19 @@
  * 
  * Observability Analysis Example
  * 
- * This example demonstrates observability analysis and restoration techniques:
+ * This example demonstrates observability analysis techniques:
  * 1. Check if system is fully observable (can estimate all bus voltages)
  * 2. Identify non-observable buses (buses that cannot be estimated)
- * 3. Restore observability using pseudo measurements (load forecasts)
- * 4. Restore observability using pseudo measurements (load forecasts)
- * 5. Find optimal measurement placement for observability
+ * 3. Find optimal measurement placement for observability
  * 
  * Observability Concepts:
  * - A system is observable if the measurement Jacobian matrix has full rank
  * - Observable buses: Can be estimated from available measurements
  * - Non-observable buses: Cannot be estimated (need additional measurements)
- * - Pseudo measurements: Forecasted/estimated values (less accurate than real measurements)
  * 
  * Use cases:
  * - Pre-estimation validation (ensure system can be estimated)
  * - Measurement planning (determine where to place new meters)
- * - Observability restoration (add pseudo measurements automatically)
  * - Redundancy analysis (identify critical measurements)
  */
 
@@ -29,7 +25,6 @@
 #include <sle/interface/ModelLoader.h>
 #include <sle/interface/MeasurementLoader.h>
 #include <sle/observability/ObservabilityAnalyzer.h>
-#include <sle/measurements/PseudoMeasurementGenerator.h>
 #include <iostream>
 
 int main() {
@@ -68,7 +63,7 @@ int main() {
         // STEP 3: Identify Non-Observable Buses
         // ========================================================================
         // If system is not observable, identify which buses cannot be estimated
-        // These buses need additional measurements or pseudo measurements
+        // These buses need additional measurements
         if (!observable) {
             std::cout << "Non-observable buses:\n";
             // Get list of bus IDs that cannot be estimated
@@ -79,36 +74,10 @@ int main() {
             }
             std::cout << "\n";
             
-            // ========================================================================
-            // STEP 4: Restore Observability with Pseudo Measurements (if needed)
-            // ========================================================================
-            // If system is still not observable, use pseudo measurements
-            // Pseudo measurements are forecasted/estimated values:
-            // - Load forecasts from historical patterns
-            // - Estimated values from similar buses
-            // - Values from previous state estimation
-            //
-            // Pseudo measurements have lower weight (higher stdDev) than real measurements
-            // They help restore observability but are less accurate
-            if (!observable) {
-                std::cout << "Adding pseudo measurements (load forecasts)...\n";
-                // Create load forecasts for each bus (in practice, from historical data)
-                // forecasts[i] = forecasted load at bus i (in p.u.)
-                std::vector<sle::Real> forecasts(network->getBusCount(), 1.0);
-                // Generate pseudo measurements from load forecasts
-                // These are treated as P_INJECTION measurements with lower accuracy
-                sle::measurements::PseudoMeasurementGenerator::generateFromLoadForecasts(
-                    *telemetry, *network, forecasts);
-                
-                // Final observability check
-                observable = analyzer.isFullyObservable(*network, *telemetry);
-                std::cout << "After pseudo measurements: " 
-                          << (observable ? "Observable" : "Still not observable") << "\n\n";
-            }
         }
         
         // ========================================================================
-        // STEP 6: Optimal Measurement Placement
+        // STEP 4: Optimal Measurement Placement
         // ========================================================================
         // Find minimum set of additional measurements needed for full observability
         // Uses optimization algorithms (greedy, genetic algorithm, or integer programming)

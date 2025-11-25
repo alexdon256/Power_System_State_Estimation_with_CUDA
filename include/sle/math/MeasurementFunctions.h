@@ -42,9 +42,14 @@ public:
     // Returns GPU pointer to hx (data stays on GPU)
     // reuseTopology: If true, skips re-uploading network/measurement structure (assumes unchanged)
     // stream: Optional CUDA stream for asynchronous execution
+    // OPTIMIZATION: Optional residual computation (r = z - hx, Wr = w * r) in same kernel
     Real* evaluateGPU(const model::StateVector& state, const model::NetworkModel& network,
                      const model::TelemetryData& telemetry, bool reuseTopology = false, 
-                     cudaStream_t stream = nullptr);
+                     cudaStream_t stream = nullptr,
+                     const Real* z = nullptr,
+                     const Real* weights = nullptr,
+                     Real* residual = nullptr,
+                     Real* weightedResidual = nullptr);
     
     // Legacy: Evaluate and copy to host (for backward compatibility)
     void evaluate(const model::StateVector& state, const model::NetworkModel& network,

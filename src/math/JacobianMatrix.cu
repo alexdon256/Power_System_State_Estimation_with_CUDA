@@ -28,7 +28,7 @@ JacobianMatrix::~JacobianMatrix() = default;
 
 void JacobianMatrix::buildStructure(const NetworkModel& network,
                                     const TelemetryData& telemetry) {
-    const auto& measurements = telemetry.getMeasurements();
+    auto measurements = telemetry.getMeasurements();
     nRows_ = measurements.size();
     nCols_ = 2 * network.getBusCount();  // angles + magnitudes
     
@@ -37,7 +37,8 @@ void JacobianMatrix::buildStructure(const NetworkModel& network,
     
     // Build CSR structure
     for (size_t i = 0; i < measurements.size(); ++i) {
-        const auto& m = measurements[i];
+        const auto* m = measurements[i];
+        if (!m) continue;
         
         switch (m->getType()) {
             case MeasurementType::P_FLOW:
@@ -207,8 +208,9 @@ void JacobianMatrix::buildGPU(const StateVector& state,
     measurementLocations.reserve(nMeasurements);
     measurementBranches.reserve(nMeasurements);
     
-    const auto& measurements = telemetry.getMeasurements();
-    for (const auto& meas : measurements) {
+    auto measurements = telemetry.getMeasurements();
+    for (const auto* meas : measurements) {
+        if (!meas) continue;
         measurementTypes.push_back(sle::cuda::mapMeasurementTypeToIndex(meas->getType()));
         measurementLocations.push_back(network.getBusIndex(meas->getLocation()));
         measurementBranches.push_back(sle::cuda::findBranchIndex(network, 

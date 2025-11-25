@@ -202,7 +202,6 @@ Q_FLOW,FLOW_002,2,3,0.3,0.01
   - `V_PHASOR`: Voltage phasor from PMU (magnitude and angle)
   - `I_PHASOR`: Current phasor from PMU (magnitude and angle)
   - `VIRTUAL`: Virtual measurement (zero injection constraint)
-  - `PSEUDO`: Pseudo measurement (load forecast)
 
 - **DeviceId** (string): Unique identifier for the measuring device. Used to track device status, accuracy, and for bad data detection. Examples: "METER_001", "VT_001", "PMU_001".
 

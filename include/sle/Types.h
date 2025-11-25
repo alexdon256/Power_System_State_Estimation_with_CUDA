@@ -41,9 +41,8 @@ enum class MeasurementType {
     I_MAGNITUDE,      // Current magnitude
     V_ANGLE,          // Voltage angle
     V_PHASOR,         // Voltage phasor (PMU)
-    I_PHASOR,         // Current phasor (PMU)
-    PSEUDO,           // Pseudo measurement (forecast)
-    BREAKER_STATUS    // Circuit breaker status (1.0=Closed, 0.0=Open)
+    I_PHASOR          // Current phasor (PMU)
+    // Note: Circuit breaker status is handled by CircuitBreaker component, not as a measurement
 };
 
 // Measurement status

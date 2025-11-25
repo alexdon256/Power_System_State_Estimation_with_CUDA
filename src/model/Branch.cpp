@@ -65,71 +65,101 @@ Branch& Branch::operator=(const Branch& other) {
     return *this;
 }
 
+void Branch::addAssociatedDevice(MeasurementDevice* device) {
+    if (!device) return;
+    // Check for duplicates
+    for (auto* d : associatedDevices_) {
+        if (d == device) return;
+    }
+    associatedDevices_.push_back(device);
+}
+
+void Branch::removeAssociatedDevice(MeasurementDevice* device) {
+    if (!device) return;
+    for (auto it = associatedDevices_.begin(); it != associatedDevices_.end(); ++it) {
+        if (*it == device) {
+            associatedDevices_.erase(it);
+            return;
+        }
+    }
+}
+
 std::vector<const MeasurementDevice*> Branch::getAssociatedDevices(const TelemetryData& telemetry) const {
-    return telemetry.getDevicesByBranch(fromBus_, toBus_);
+    // Legacy support - construct vector from local storage
+    std::vector<const MeasurementDevice*> result;
+    result.reserve(associatedDevices_.size());
+    for (auto* device : associatedDevices_) {
+        result.push_back(device);
+    }
+    return result;
 }
 
 std::vector<const MeasurementModel*> Branch::getMeasurementsFromDevices(const TelemetryData& telemetry) const {
+    // OPTIMIZATION: Use local associatedDevices_ (no lookup)
     std::vector<const MeasurementModel*> result;
-    auto devices = getAssociatedDevices(telemetry);
-    // Pre-allocate capacity for efficiency
     size_t totalMeasurements = 0;
-    for (const auto* device : devices) {
-        totalMeasurements += device->getMeasurements().size();
+    for (const auto* device : associatedDevices_) {
+        totalMeasurements += device->size();
     }
     result.reserve(totalMeasurements);
     
-    for (const auto* device : devices) {
-        const auto& measurements = device->getMeasurements();
-        result.insert(result.end(), measurements.begin(), measurements.end());
+    for (const auto* device : associatedDevices_) {
+        for (auto it = device->begin(); it != device->end(); ++it) {
+            result.push_back(it->get());
+        }
     }
     return result;
 }
 
 std::vector<const MeasurementModel*> Branch::getMeasurementsFromDevices(const TelemetryData& telemetry, MeasurementType type) const {
+    // OPTIMIZATION: Use local associatedDevices_ (no lookup)
     std::vector<const MeasurementModel*> result;
-    auto devices = getAssociatedDevices(telemetry);
-    // Pre-allocate capacity estimate
-    result.reserve(devices.size());
+    result.reserve(associatedDevices_.size());
     
-    for (const auto* device : devices) {
-        const auto& measurements = device->getMeasurements();
-        for (const auto* measurement : measurements) {
-            if (measurement->getType() == type) {
-                result.push_back(measurement);
-            }
+    for (const auto* device : associatedDevices_) {
+        const MeasurementModel* meas = device->getMeasurement(type);
+        if (meas) {
+            result.push_back(meas);
         }
     }
     return result;
 }
 
 bool Branch::getCurrentPowerFlow(const TelemetryData& telemetry, Real& pFlow, Real& qFlow) const {
-    auto pMeasurements = getMeasurementsFromDevices(telemetry, MeasurementType::P_FLOW);
-    auto qMeasurements = getMeasurementsFromDevices(telemetry, MeasurementType::Q_FLOW);
+    // OPTIMIZATION: Use local associatedDevices_ (no lookup)
+    bool foundP = false, foundQ = false;
     
-    bool found = false;
-    if (!pMeasurements.empty()) {
-        pFlow = pMeasurements[0]->getValue();
-        found = true;
-    } else {
-        pFlow = 0.0;
+    for (const auto* device : associatedDevices_) {
+        if (!foundP) {
+            const MeasurementModel* pMeas = device->getMeasurement(MeasurementType::P_FLOW);
+            if (pMeas) {
+                pFlow = pMeas->getValue();
+                foundP = true;
+            }
+        }
+        if (!foundQ) {
+            const MeasurementModel* qMeas = device->getMeasurement(MeasurementType::Q_FLOW);
+            if (qMeas) {
+                qFlow = qMeas->getValue();
+                foundQ = true;
+            }
+        }
+        if (foundP && foundQ) break;
     }
     
-    if (!qMeasurements.empty()) {
-        qFlow = qMeasurements[0]->getValue();
-        found = true;
-    } else {
-        qFlow = 0.0;
-    }
+    if (!foundP) pFlow = 0.0;
+    if (!foundQ) qFlow = 0.0;
     
-    return found;
+    return foundP || foundQ;
 }
 
 Real Branch::getCurrentCurrentMeasurement(const TelemetryData& telemetry) const {
-    auto measurements = getMeasurementsFromDevices(telemetry, MeasurementType::I_MAGNITUDE);
-    if (!measurements.empty()) {
-        // Return the most recent measurement (if multiple devices)
-        return measurements[0]->getValue();
+    // OPTIMIZATION: Use local associatedDevices_ (no lookup)
+    for (const auto* device : associatedDevices_) {
+        const MeasurementModel* meas = device->getMeasurement(MeasurementType::I_MAGNITUDE);
+        if (meas) {
+            return meas->getValue();
+        }
     }
     return std::numeric_limits<Real>::quiet_NaN();
 }

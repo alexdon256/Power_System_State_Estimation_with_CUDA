@@ -347,6 +347,7 @@ __global__ void evaluateMeasurementsKernel(
 // OPTIMIZATION: Fused kernel that computes power flows and evaluates measurements in one pass
 // Uses shared memory for intermediate power flow results to reduce global memory access
 // Reduces kernel launch overhead by combining two kernels into one
+// Can optionally compute residuals (r = z - hx) and weighted residuals (Wr)
 __global__ void computeMeasurementsFusedKernel(
     const Real* v, const Real* theta,
     const DeviceBus* buses, const DeviceBranch* branches,
@@ -358,7 +359,12 @@ __global__ void computeMeasurementsFusedKernel(
     Real* pInjection, Real* qInjection,
     Real* pFlow, Real* qFlow,
     Real* hx,
-    Index nBuses, Index nBranches, Index nMeasurements) {
+    Index nBuses, Index nBranches, Index nMeasurements,
+    const Real* z,              // Optional: Measured values
+    const Real* weights,        // Optional: Weights
+    Real* residual,             // Optional: Output r = z - hx
+    Real* weightedResidual)     // Optional: Output Wr
+{
     
     Index idx = blockIdx.x * blockDim.x + threadIdx.x;
     
@@ -478,6 +484,15 @@ __global__ void computeMeasurementsFusedKernel(
         }
         
         hx[idx] = value;
+        
+        // Phase 4: Compute Residuals (if requested)
+        if (z && residual) {
+            Real r = z[idx] - value;
+            residual[idx] = r;
+            if (weights && weightedResidual) {
+                weightedResidual[idx] = CUDA_FMA(weights[idx], r, 0.0);
+            }
+        }
     }
 }
 
@@ -496,7 +511,11 @@ void computeMeasurementsGPU(
     Real* pFlow, Real* qFlow,
     Real* hx,
     Index nBuses, Index nBranches, Index nMeasurements,
-    cudaStream_t stream) {
+    cudaStream_t stream,
+    const Real* z,
+    const Real* weights,
+    Real* residual,
+    Real* weightedResidual) {
     
     constexpr Index blockSize = 256;
     Index maxSize = (nBuses > nBranches) ? nBuses : nBranches;
@@ -506,13 +525,15 @@ void computeMeasurementsGPU(
     // OPTIMIZATION: Always use fused kernel for better performance
     // The fused kernel uses proper memory fences to ensure correctness
     // This eliminates kernel launch overhead while maintaining correctness
+    // Now also supports fused residual computation
     LAUNCH_KERNEL(computeMeasurementsFusedKernel, gridSize, blockSize, 0, stream,
                   v, theta, buses, branches,
                   branchFromBus, branchFromBusRowPtr,
                   branchToBus, branchToBusRowPtr,
                   measurementTypes, measurementLocations, measurementBranches,
                   pInjection, qInjection, pFlow, qFlow, hx,
-                  nBuses, nBranches, nMeasurements);
+                  nBuses, nBranches, nMeasurements,
+                  z, weights, residual, weightedResidual);
 }
 
 // Unified kernel: Compute power flows with optional derived quantities (MW/MVAR/I)

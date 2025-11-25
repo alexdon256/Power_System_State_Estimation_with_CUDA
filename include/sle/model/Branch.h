@@ -69,8 +69,12 @@ public:
     bool getStatus() const { return status_; }
     bool isOn() const { return status_; }
     
-    // Get telemetry from associated devices (requires TelemetryData reference)
+    // Get telemetry from associated devices
     // Returns all devices (multimeters) associated with this branch
+    // OPTIMIZATION: Returns direct pointers stored in Branch object (no lookup)
+    const std::vector<MeasurementDevice*>& getAssociatedDevices() const { return associatedDevices_; }
+    
+    // Legacy method support (deprecated)
     std::vector<const MeasurementDevice*> getAssociatedDevices(const TelemetryData& telemetry) const;
     
     // Get all measurements from devices associated with this branch
@@ -95,7 +99,13 @@ public:
 private:
     // Internal setters (used by NetworkModel)
     friend class NetworkModel;
+    friend class TelemetryData;  // Allow TelemetryData to update associatedDevices_
+    
     void setPowerFlow(Real p, Real q, Real pMW, Real qMVAR, Real iAmps, Real iPU);
+    
+    void addAssociatedDevice(MeasurementDevice* device);
+    void removeAssociatedDevice(MeasurementDevice* device);
+    
     BranchId id_;
     BusId fromBus_;
     BusId toBus_;
@@ -109,6 +119,9 @@ private:
     Real phaseShift_;  // Phase shift angle (radians)
     
     bool status_;      // true = Closed (In Service), false = Open (Out of Service)
+    
+    // OPTIMIZATION: Direct pointers to associated devices (avoids map lookup)
+    std::vector<MeasurementDevice*> associatedDevices_;
     
     // Computed values (set by Solver::storeComputedValues)
     Real pFlow_;       // P flow in p.u.

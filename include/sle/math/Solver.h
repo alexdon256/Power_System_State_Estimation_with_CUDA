@@ -109,12 +109,9 @@ private:
     SparseMatrix gainMatrix_;         // Reused gain matrix (preserves allocation)
     
     // Pinned memory buffers for frequently transferred data (faster transfers)
-    Real* h_pinned_z_ = nullptr;           // Pinned: measurement vector
-    Real* h_pinned_weights_ = nullptr;      // Pinned: weight vector
-    Real* h_pinned_state_ = nullptr;       // Pinned: state vector
-    size_t pinned_z_size_ = 0;
-    size_t pinned_weights_size_ = 0;
-    size_t pinned_state_size_ = 0;
+    // OPTIMIZATION: Unified pinned buffer for z, weights, and state
+    Real* h_pinned_unified_ = nullptr;
+    size_t pinned_unified_capacity_ = 0;
     
     // CudaMemoryPool stores large GPU buffers to avoid re-allocation overhead.
     // These buffers are only resized when necessary.

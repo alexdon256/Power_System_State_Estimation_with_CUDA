@@ -46,7 +46,7 @@ telemetry->setNetworkModel(network.get());
 // Update measurements on the fly
 sle::model::TelemetryUpdate update;
 update.deviceId = "VM-001";
-update.type = sle::MeasurementType::V_MAGNITUDE;  // Required: device may have multiple measurements
+update.type = sle::MeasurementType::V_MAGNITUDE;
 update.value = 1.05;
 update.stdDev = 0.01;
 update.busId = 5;
@@ -59,29 +59,6 @@ Real currentVoltage = bus->getCurrentVoltageMeasurement(*telemetry);
 
 // Run incremental estimation (faster)
 auto result = estimator.estimateIncremental();
-```
-
-### Circuit Breaker Status Updates
-
-Circuit breaker status measurements (`BREAKER_STATUS`) automatically update network topology:
-
-```cpp
-// Update breaker status (automatically updates branch status)
-sle::model::TelemetryUpdate breakerUpdate;
-breakerUpdate.deviceId = "BREAKER_1_2";
-breakerUpdate.type = sle::MeasurementType::BREAKER_STATUS;
-breakerUpdate.value = 1.0;  // 1.0 = closed, 0.0 = open
-breakerUpdate.stdDev = 0.01;
-breakerUpdate.fromBus = 1;
-breakerUpdate.toBus = 2;
-breakerUpdate.timestamp = getCurrentTimestamp();
-
-telemetry->updateMeasurement(breakerUpdate);
-// Branch status is automatically updated, topology change callback is triggered
-
-// The branch status is immediately updated
-Branch* branch = network->getBranchByBuses(1, 2);
-bool isClosed = branch->isOn();  // true if breaker is closed
 ```
 
 **Important**: All query methods query telemetry each time they're called, so they **always return the latest values**. Updates are immediately visible without caching.
@@ -185,10 +162,9 @@ if (bus) {
 ```cpp
 // Via TelemetryData directly
 auto measurement = std::make_unique<MeasurementModel>(
-    MeasurementType::V_MAGNITUDE, 1.05, 0.01);
+    MeasurementType::V_MAGNITUDE, 1.05, 0.01, "PMU_001");
 measurement->setLocation(1);
-// Pass device ID to addMeasurement for automatic linking
-telemetry->addMeasurement(std::move(measurement), "PMU_001");
+telemetry->addMeasurement(std::move(measurement));
 
 // Via TelemetryData (real-time updates)
 sle::model::TelemetryUpdate update;
@@ -210,18 +186,9 @@ telemetry->updateMeasurements(updates);
 // Update existing measurement by device ID
 sle::model::TelemetryUpdate update;
 update.deviceId = "PMU_001";  // Must match existing device ID
-update.type = sle::MeasurementType::V_MAGNITUDE;  // Required: device may have multiple measurements
 update.value = 1.06;  // New value
 update.stdDev = 0.01;
-update.busId = 1;  // Location information
-update.timestamp = getCurrentTimestamp();
 telemetry->updateMeasurement(update);
-
-// Alternative: Update by device ID and type directly
-// This method requires the measurement type since a device can have multiple measurements
-bool updated = telemetry->updateMeasurement("PMU_001", 
-                                            sle::MeasurementType::V_MAGNITUDE,
-                                            1.06, 0.01, getCurrentTimestamp());
 ```
 
 ### Removing Measurements

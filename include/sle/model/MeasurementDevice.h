@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <unordered_map>
 
 namespace sle {
 namespace model {
@@ -45,14 +46,22 @@ public:
     Real getAccuracy() const { return accuracy_; }
     void setAccuracy(Real accuracy) { accuracy_ = accuracy; }
     
-    // Get all measurements produced by this device
-    const std::vector<MeasurementModel*>& getMeasurements() const { return measurements_; }
+    // Get all measurements produced by this device (returns iterators for efficient access)
+    // Use begin()/end() for iteration, or getMeasurement(type) for direct lookup
+    auto begin() const { return measurements_.begin(); }
+    auto end() const { return measurements_.end(); }
+    size_t size() const { return measurements_.size(); }
     
-    // Add measurement produced by this device
-    void addMeasurement(MeasurementModel* measurement);
+    // Add measurement produced by this device (takes ownership)
+    // Returns pointer to added measurement for direct access
+    MeasurementModel* addMeasurement(std::unique_ptr<MeasurementModel> measurement);
     
-    // Remove measurement
-    void removeMeasurement(MeasurementModel* measurement);
+    // Remove measurement by type
+    bool removeMeasurement(MeasurementType type);
+    
+    // Get measurement by type (O(1) lookup)
+    MeasurementModel* getMeasurement(MeasurementType type);
+    const MeasurementModel* getMeasurement(MeasurementType type) const;
     
     // Get device type as string (for debugging/logging)
     virtual std::string getDeviceType() const = 0;
@@ -62,7 +71,11 @@ protected:
     std::string name_;
     DeviceStatus status_;
     Real accuracy_;  // Standard deviation multiplier (0.01 = 1% accuracy)
-    std::vector<MeasurementModel*> measurements_;  // Measurements produced by this device
+    
+    // Measurements owned by this device
+    std::vector<std::unique_ptr<MeasurementModel>> measurements_;
+    // Fast O(1) lookup by measurement type
+    std::unordered_map<MeasurementType, MeasurementModel*> measurementMap_;
 };
 
 // Multimeter: Measures power flow on branches using CT and PT

@@ -70,8 +70,12 @@ Real* MeasurementFunctions::evaluateGPU(const StateVector& state,
                                        const NetworkModel& network,
                                        const TelemetryData& telemetry,
                                        bool reuseTopology,
-                                       cudaStream_t stream) {
-    const auto& measurements = telemetry.getMeasurements();
+                                       cudaStream_t stream,
+                                       const Real* z,
+                                       const Real* weights,
+                                       Real* residual,
+                                       Real* weightedResidual) {
+    auto measurements = telemetry.getMeasurements();
     const size_t nMeas = measurements.size();
     const size_t nBuses = network.getBusCount();
     const size_t nBranches = network.getBranchCount();
@@ -145,7 +149,8 @@ Real* MeasurementFunctions::evaluateGPU(const StateVector& state,
             pImpl_->measurementLocations_.reserve(nMeas);
             pImpl_->measurementBranches_.reserve(nMeas);
             
-            for (const auto& meas : measurements) {
+            for (const auto* meas : measurements) {
+                if (!meas) continue;
                 pImpl_->measurementTypes_.push_back(cuda::mapMeasurementTypeToIndex(meas->getType()));
                 pImpl_->measurementLocations_.push_back(network.getBusIndex(meas->getLocation()));
                 pImpl_->measurementBranches_.push_back(cuda::findBranchIndex(network, 
@@ -182,7 +187,8 @@ Real* MeasurementFunctions::evaluateGPU(const StateVector& state,
         static_cast<Index>(nBuses),
         static_cast<Index>(nBranches),
         static_cast<Index>(nMeas),
-        stream);
+        stream,
+        z, weights, residual, weightedResidual);
     
     return dataManager->getHx();
 }
