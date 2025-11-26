@@ -496,6 +496,67 @@ __global__ void computeMeasurementsFusedKernel(
     }
 }
 
+// OPTIMIZATION: GPU-side weight computation from stdDev
+// Computes weight = 1.0 / (stdDev^2) on GPU to avoid CPU computation
+__global__ void computeWeightsFromStdDevKernel(
+    const Real* stdDev,
+    Real* weights,
+    Index nMeasurements) {
+    Index idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < nMeasurements) {
+        Real stdDevVal = stdDev[idx];
+        Real stdDevSq = CUDA_FMA(stdDevVal, stdDevVal, 0.0);
+        weights[idx] = CUDA_DIV(1.0, stdDevSq);
+    }
+}
+
+// OPTIMIZATION: Fused kernel: Compute weights and residuals in one pass
+// Avoids separate kernel launches and reduces memory access
+__global__ void computeWeightsAndResidualsFusedKernel(
+    const Real* z,
+    const Real* hx,
+    const Real* stdDev,
+    Real* weights,
+    Real* residual,
+    Real* weightedResidual,
+    Index nMeasurements) {
+    Index idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < nMeasurements) {
+        // Compute weight from stdDev
+        Real stdDevVal = stdDev[idx];
+        Real stdDevSq = CUDA_FMA(stdDevVal, stdDevVal, 0.0);
+        Real weight = CUDA_DIV(1.0, stdDevSq);
+        weights[idx] = weight;
+        
+        // Compute residual
+        Real r = z[idx] - hx[idx];
+        residual[idx] = r;
+        
+        // Compute weighted residual
+        weightedResidual[idx] = CUDA_FMA(weight, r, 0.0);
+    }
+}
+
+// Wrapper: Compute weights from stdDev on GPU
+void computeWeightsFromStdDevGPU(const Real* stdDev, Real* weights, 
+                                 Index nMeasurements, cudaStream_t stream) {
+    constexpr Index blockSize = 256;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(nMeasurements);
+    LAUNCH_KERNEL(computeWeightsFromStdDevKernel, gridSize, blockSize, 0, stream,
+                  stdDev, weights, nMeasurements);
+}
+
+// Wrapper: Fused weights and residuals computation
+void computeWeightsAndResidualsFusedGPU(
+    const Real* z, const Real* hx, const Real* stdDev,
+    Real* weights, Real* residual, Real* weightedResidual,
+    Index nMeasurements, cudaStream_t stream) {
+    constexpr Index blockSize = 256;
+    const Index gridSize = KernelConfig<blockSize>::gridSize(nMeasurements);
+    LAUNCH_KERNEL(computeWeightsAndResidualsFusedKernel, gridSize, blockSize, 0, stream,
+                  z, hx, stdDev, weights, residual, weightedResidual, nMeasurements);
+}
+
 // Wrapper: Compute power injections and flows, then evaluate measurements
 // All operations on GPU, data stays on GPU
 // OPTIMIZATION: Optionally uses fused kernel to reduce launch overhead

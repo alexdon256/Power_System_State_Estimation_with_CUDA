@@ -26,8 +26,17 @@ public:
     void setValue(Real value) { value_ = value; }
     
     Real getStdDev() const { return stdDev_; }
-    void setStdDev(Real stdDev) { stdDev_ = stdDev; }
-    Real getWeight() const { return 1.0 / (stdDev_ * stdDev_); }
+    void setStdDev(Real stdDev) { 
+        stdDev_ = stdDev; 
+        weightDirty_ = true;  // Mark weight as dirty
+    }
+    Real getWeight() const { 
+        if (weightDirty_) {
+            cachedWeight_ = 1.0 / (stdDev_ * stdDev_);
+            weightDirty_ = false;
+        }
+        return cachedWeight_;
+    }
     
     MeasurementDevice* getDevice() const { return device_; }
     void setDevice(MeasurementDevice* device) { device_ = device; }
@@ -49,7 +58,9 @@ private:
     MeasurementType type_;
     Real value_;
     Real stdDev_;
-    MeasurementDevice* device_;  // Pointer to device that produced this measurement
+    mutable Real cachedWeight_;      // Cached weight = 1.0 / (stdDev^2)
+    mutable bool weightDirty_;       // Flag to track if weight needs recomputation
+    MeasurementDevice* device_;      // Pointer to device that produced this measurement
     // Device knows its location - no need to store redundantly
     
     int64_t timestamp_;

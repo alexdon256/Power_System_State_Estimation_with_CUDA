@@ -19,13 +19,20 @@ namespace interface {
 
 StateEstimator::StateEstimator() 
     : solver_(std::make_unique<math::Solver>()),
-      modelUpdated_(true), telemetryUpdated_(true) {
+      modelUpdated_(true), telemetryUpdated_(true), topologyChanged_(false) {
 }
 
 StateEstimator::~StateEstimator() = default;
 
 void StateEstimator::setNetwork(std::shared_ptr<model::NetworkModel> network) {
     network_ = network;
+    
+    // Set up topology change callback for circuit breaker status changes
+    if (network_) {
+        network_->setTopologyChangeCallback([this]() {
+            markTopologyChanged();  // Automatically detect topology changes from circuit breakers
+        });
+    }
     
     // Pass network to telemetry data for topology updates
     if (telemetry_) {
@@ -119,7 +126,9 @@ StateEstimationResult StateEstimator::estimateInternal(const math::SolverConfig&
     solver_->setConfig(config);
     
     // Check if we can reuse Jacobian structure (topology not updated)
-    bool reuseStructure = !modelUpdated_.load() && !telemetryUpdated_.load();
+    // Topology changes require Jacobian structure rebuild (reuseStructure=false)
+    bool topologyChanged = topologyChanged_.load();
+    bool reuseStructure = !topologyChanged && !modelUpdated_.load() && !telemetryUpdated_.load();
     
     math::SolverResult solverResult = solver_->solve(*currentState_, *network_, *telemetry_, reuseStructure);
     
@@ -138,8 +147,10 @@ StateEstimationResult StateEstimator::estimateInternal(const math::SolverConfig&
         solver_->storeComputedValues(*currentState_, *network_);
     }
     
+    // Reset flags after estimation
     modelUpdated_.store(false);
     telemetryUpdated_.store(false);
+    topologyChanged_.store(false);  // Reset topology change flag
     
     return result;
 }

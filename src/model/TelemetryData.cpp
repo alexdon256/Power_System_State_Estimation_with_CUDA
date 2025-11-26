@@ -7,9 +7,11 @@
 #include <sle/model/TelemetryData.h>
 #include <sle/model/MeasurementDevice.h>
 #include <sle/model/NetworkModel.h>
+#include <sle/cuda/CudaUtils.h>
 #include <algorithm>
 #include <unordered_set>
 #include <functional>
+#include <cuda_runtime.h>
 
 #ifdef USE_OPENMP
 #include <omp.h>
@@ -19,7 +21,9 @@ namespace sle {
 namespace model {
 
 TelemetryData::TelemetryData() 
-    : network_(nullptr), latestTimestamp_(0), cachedMeasurementCount_(0), measurementCountDirty_(true) {
+    : network_(nullptr), latestTimestamp_(0), cachedMeasurementCount_(0), measurementCountDirty_(true),
+      h_pinned_z_(nullptr), h_pinned_stdDev_(nullptr), h_pinned_weights_(nullptr),
+      soaArraySize_(0), soaArrayCapacity_(0), soaArraysDirty_(true) {
 }
 
 std::vector<const MeasurementModel*> TelemetryData::getMeasurements() const {
@@ -267,6 +271,9 @@ bool TelemetryData::updateMeasurement(const std::string& deviceId, MeasurementTy
         m->setTimestamp(timestamp);
     }
     
+    // OPTIMIZATION: Mark SoA arrays as dirty when measurement is updated
+    markArraysDirty();
+    
     return true;
 }
 
@@ -284,6 +291,7 @@ void TelemetryData::addDevice(std::unique_ptr<MeasurementDevice> device) {
     orderedDevices_.push_back(devicePtr);  // Maintain stable order
     updateDeviceIndices(devicePtr);
     measurementCountDirty_ = true;
+    markArraysDirty();  // OPTIMIZATION: Mark arrays dirty when device added
 }
 
 
@@ -452,7 +460,129 @@ void TelemetryData::applyUpdate(const TelemetryUpdate& update) {
     }
 }
 
+// OPTIMIZATION: Build SoA arrays in pinned memory
+void TelemetryData::buildSoAArrays() const {
+    if (!soaArraysDirty_ && soaArraySize_ > 0) {
+        return;  // Arrays are up-to-date
+    }
+    
+    // Get current measurement count
+    size_t nMeas = getMeasurementCount();
+    if (nMeas == 0) {
+        soaArraySize_ = 0;
+        soaArraysDirty_ = false;
+        return;
+    }
+    
+    // Allocate/reallocate pinned memory if needed
+    cuda::allocatePinnedBuffer(h_pinned_z_, soaArrayCapacity_, nMeas);
+    cuda::allocatePinnedBuffer(h_pinned_stdDev_, soaArrayCapacity_, nMeas);
+    cuda::allocatePinnedBuffer(h_pinned_weights_, soaArrayCapacity_, nMeas);
+    
+    if (!h_pinned_z_ || !h_pinned_stdDev_ || !h_pinned_weights_) {
+        soaArraySize_ = 0;
+        return;
+    }
+    
+    // OPTIMIZATION: Parallel extraction for large systems
+#ifdef USE_OPENMP
+    if (orderedDevices_.size() > 100) {
+        // Parallel extraction with thread-local arrays
+        std::vector<std::vector<Real>> threadLocalZ(omp_get_max_threads());
+        std::vector<std::vector<Real>> threadLocalStdDev(omp_get_max_threads());
+        std::vector<std::vector<Real>> threadLocalWeights(omp_get_max_threads());
+        
+        #pragma omp parallel for
+        for (size_t i = 0; i < orderedDevices_.size(); ++i) {
+            int tid = omp_get_thread_num();
+            const auto* device = orderedDevices_[i];
+            for (auto it = device->begin(); it != device->end(); ++it) {
+                const MeasurementModel* m = it->get();
+                if (m) {
+                    threadLocalZ[tid].push_back(m->getValue());
+                    threadLocalStdDev[tid].push_back(m->getStdDev());
+                    threadLocalWeights[tid].push_back(m->getWeight());  // Uses cached weight
+                }
+            }
+        }
+        
+        // Merge thread-local results
+        size_t offset = 0;
+        for (int tid = 0; tid < omp_get_max_threads(); ++tid) {
+            const auto& localZ = threadLocalZ[tid];
+            const auto& localStdDev = threadLocalStdDev[tid];
+            const auto& localWeights = threadLocalWeights[tid];
+            
+            std::copy(localZ.begin(), localZ.end(), h_pinned_z_ + offset);
+            std::copy(localStdDev.begin(), localStdDev.end(), h_pinned_stdDev_ + offset);
+            std::copy(localWeights.begin(), localWeights.end(), h_pinned_weights_ + offset);
+            offset += localZ.size();
+        }
+    } else {
+#endif
+        // Sequential extraction for small systems
+        size_t idx = 0;
+        for (const auto* device : orderedDevices_) {
+            for (auto it = device->begin(); it != device->end(); ++it) {
+                const MeasurementModel* m = it->get();
+                if (m) {
+                    h_pinned_z_[idx] = m->getValue();
+                    h_pinned_stdDev_[idx] = m->getStdDev();
+                    h_pinned_weights_[idx] = m->getWeight();  // Uses cached weight
+                    ++idx;
+                }
+            }
+        }
+#ifdef USE_OPENMP
+    }
+#endif
+    
+    soaArraySize_ = nMeas;
+    soaArraysDirty_ = false;
+}
+
+const Real* TelemetryData::getMeasurementValuesArray() const {
+    buildSoAArrays();
+    return h_pinned_z_;
+}
+
+const Real* TelemetryData::getStdDevArray() const {
+    buildSoAArrays();
+    return h_pinned_stdDev_;
+}
+
+const Real* TelemetryData::getWeightsArray() const {
+    buildSoAArrays();
+    return h_pinned_weights_;
+}
+
+size_t TelemetryData::getMeasurementArraySize() const {
+    buildSoAArrays();
+    return soaArraySize_;
+}
+
+void TelemetryData::markArraysDirty() {
+    soaArraysDirty_ = true;
+}
+
 void TelemetryData::clear() {
+    // Free pinned memory
+    if (h_pinned_z_) {
+        cudaFreeHost(h_pinned_z_);
+        h_pinned_z_ = nullptr;
+    }
+    if (h_pinned_stdDev_) {
+        cudaFreeHost(h_pinned_stdDev_);
+        h_pinned_stdDev_ = nullptr;
+    }
+    if (h_pinned_weights_) {
+        cudaFreeHost(h_pinned_weights_);
+        h_pinned_weights_ = nullptr;
+    }
+    soaArraySize_ = 0;
+    soaArrayCapacity_ = 0;
+    soaArraysDirty_ = true;
+    
     // Unlink from network first to avoid dangling pointers
     if (network_) {
         for (auto* device : orderedDevices_) {

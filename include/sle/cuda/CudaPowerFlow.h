@@ -112,6 +112,20 @@ void computeJacobian(const Real* v, const Real* theta,
                     Real* jacobianValues,
                     Index nMeasurements, Index nBuses, Index nBranches);
 
+// OPTIMIZATION: GPU-side weight computation from stdDev
+// Computes weight = 1.0 / (stdDev^2) on GPU to avoid CPU computation
+// This eliminates CPU-side weight computation and reduces host-device transfers
+void computeWeightsFromStdDevGPU(const Real* stdDev, Real* weights, 
+                                 Index nMeasurements, cudaStream_t stream = nullptr);
+
+// OPTIMIZATION: Fused kernel: Compute weights and residuals in one pass
+// Avoids separate kernel launches and reduces memory access
+// Computes: weight = 1.0 / (stdDev^2), residual = z - hx, weightedResidual = weight * residual
+void computeWeightsAndResidualsFusedGPU(
+    const Real* z, const Real* hx, const Real* stdDev,
+    Real* weights, Real* residual, Real* weightedResidual,
+    Index nMeasurements, cudaStream_t stream = nullptr);
+
 } // namespace cuda
 } // namespace sle
 

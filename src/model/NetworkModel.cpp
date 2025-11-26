@@ -344,6 +344,109 @@ void NetworkModel::removeBus(BusId id) {
     }
 }
 
+// Circuit breaker management
+CircuitBreaker* NetworkModel::addCircuitBreaker(const std::string& id, BranchId branchId, BusId fromBus, BusId toBus, const std::string& name) {
+    // Check if circuit breaker already exists
+    auto it = circuitBreakerIndexMap_.find(id);
+    if (it != circuitBreakerIndexMap_.end()) {
+        return circuitBreakers_[it->second].get();
+    }
+    
+    // Verify branch exists
+    auto branchIt = branchIndexMap_.find(branchId);
+    if (branchIt == branchIndexMap_.end()) {
+        return nullptr;  // Branch doesn't exist
+    }
+    
+    // Create circuit breaker
+    auto cb = std::make_unique<CircuitBreaker>(id, branchId, fromBus, toBus, name);
+    CircuitBreaker* cbPtr = cb.get();
+    Index cbIdx = static_cast<Index>(circuitBreakers_.size());
+    
+    // Set callback for status changes
+    cb->setStatusChangeCallback([this](BranchId bid, bool newStatus) {
+        onCircuitBreakerStatusChanged(bid, newStatus);
+    });
+    
+    // Initialize branch status from circuit breaker status
+    Branch* branch = branches_[branchIt->second].get();
+    if (branch) {
+        branch->setStatus(cb->getStatus());
+    }
+    
+    circuitBreakerIndexMap_[id] = cbIdx;
+    branchToCircuitBreakerMap_[branchId] = cbIdx;
+    circuitBreakers_.push_back(std::move(cb));
+    
+    return cbPtr;
+}
+
+CircuitBreaker* NetworkModel::getCircuitBreaker(const std::string& id) {
+    auto it = circuitBreakerIndexMap_.find(id);
+    if (it != circuitBreakerIndexMap_.end() && static_cast<size_t>(it->second) < circuitBreakers_.size()) {
+        return circuitBreakers_[it->second].get();
+    }
+    return nullptr;
+}
+
+const CircuitBreaker* NetworkModel::getCircuitBreaker(const std::string& id) const {
+    auto it = circuitBreakerIndexMap_.find(id);
+    if (it != circuitBreakerIndexMap_.end() && static_cast<size_t>(it->second) < circuitBreakers_.size()) {
+        return circuitBreakers_[it->second].get();
+    }
+    return nullptr;
+}
+
+CircuitBreaker* NetworkModel::getCircuitBreakerByBranch(BranchId branchId) {
+    auto it = branchToCircuitBreakerMap_.find(branchId);
+    if (it != branchToCircuitBreakerMap_.end() && static_cast<size_t>(it->second) < circuitBreakers_.size()) {
+        return circuitBreakers_[it->second].get();
+    }
+    return nullptr;
+}
+
+const CircuitBreaker* NetworkModel::getCircuitBreakerByBranch(BranchId branchId) const {
+    auto it = branchToCircuitBreakerMap_.find(branchId);
+    if (it != branchToCircuitBreakerMap_.end() && static_cast<size_t>(it->second) < circuitBreakers_.size()) {
+        return circuitBreakers_[it->second].get();
+    }
+    return nullptr;
+}
+
+std::vector<CircuitBreaker*> NetworkModel::getCircuitBreakers() {
+    std::vector<CircuitBreaker*> result;
+    result.reserve(circuitBreakers_.size());
+    for (auto& cb : circuitBreakers_) {
+        result.push_back(cb.get());
+    }
+    return result;
+}
+
+std::vector<const CircuitBreaker*> NetworkModel::getCircuitBreakers() const {
+    std::vector<const CircuitBreaker*> result;
+    result.reserve(circuitBreakers_.size());
+    for (const auto& cb : circuitBreakers_) {
+        result.push_back(cb.get());
+    }
+    return result;
+}
+
+void NetworkModel::onCircuitBreakerStatusChanged(BranchId branchId, bool newStatus) {
+    // Update branch status to match circuit breaker status
+    auto branchIt = branchIndexMap_.find(branchId);
+    if (branchIt != branchIndexMap_.end() && static_cast<size_t>(branchIt->second) < branches_.size()) {
+        Branch* branch = branches_[branchIt->second].get();
+        if (branch) {
+            branch->setStatus(newStatus);
+        }
+    }
+    
+    // Notify topology change callback (for StateEstimator)
+    if (topologyChangeCallback_) {
+        topologyChangeCallback_();
+    }
+}
+
 void NetworkModel::removeBranch(BranchId id) {
     auto it = branchIndexMap_.find(id);
     if (it != branchIndexMap_.end()) {
@@ -381,10 +484,13 @@ void NetworkModel::removeBranch(BranchId id) {
 void NetworkModel::clear() {
     buses_.clear();
     branches_.clear();
+    circuitBreakers_.clear();
     busIndexMap_.clear();
     branchIndexMap_.clear();
     busNameMap_.clear();  // Clear name index
     branchBusPairMap_.clear();  // Clear fast lookup map
+    circuitBreakerIndexMap_.clear();
+    branchToCircuitBreakerMap_.clear();
     referenceBus_ = -1;
     // Clear cached vectors
     cachedPInjection_.clear();

@@ -55,10 +55,12 @@ public:
     // Check if model or measurements have been updated
     bool isModelUpdated() const { return modelUpdated_.load(); }
     bool isTelemetryUpdated() const { return telemetryUpdated_.load(); }
+    bool isTopologyChanged() const { return topologyChanged_.load(); }
     
     // Mark model/telemetry as updated (called automatically on updates)
     void markModelUpdated() { modelUpdated_.store(true); }
     void markTelemetryUpdated() { telemetryUpdated_.store(true); }
+    void markTopologyChanged() { topologyChanged_.store(true); modelUpdated_.store(true); }
     
     // Get current state estimate
     std::shared_ptr<model::StateVector> getCurrentState() const;
@@ -95,6 +97,7 @@ private:
     
     std::atomic<bool> modelUpdated_;
     std::atomic<bool> telemetryUpdated_;
+    std::atomic<bool> topologyChanged_;  // Set when circuit breaker status changes
     
     math::SolverConfig solverConfig_;
     

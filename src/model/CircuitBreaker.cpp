@@ -14,6 +14,16 @@ CircuitBreaker::CircuitBreaker(const std::string& id, BranchId branchId, BusId f
     // Default to closed (allows flow)
 }
 
+void CircuitBreaker::setStatus(bool closed) {
+    bool oldStatus = status_;
+    status_ = closed;
+    
+    // If status changed, notify callback (for automatic topology updates)
+    if (oldStatus != status_ && statusChangeCallback_) {
+        statusChangeCallback_(branchId_, status_);
+    }
+}
+
 } // namespace model
 } // namespace sle
 

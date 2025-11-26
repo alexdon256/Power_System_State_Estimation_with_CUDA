@@ -1,5 +1,93 @@
 # Comparison with ETAP State Load Estimation
 
+## Measurement Coverage Comparison
+
+### Measurement Types Supported
+
+| Measurement Type | This Project | ETAP SLE | Notes |
+|-----------------|--------------|----------|-------|
+| **Power Measurements** |
+| Active Power Flow (P_FLOW) | ✅ | ✅ | Equivalent |
+| Reactive Power Flow (Q_FLOW) | ✅ | ✅ | Equivalent |
+| Active Power Injection (P_INJECTION) | ✅ | ✅ | Equivalent |
+| Reactive Power Injection (Q_INJECTION) | ✅ | ✅ | Equivalent |
+| **Voltage Measurements** |
+| Voltage Magnitude (V_MAGNITUDE) | ✅ | ✅ | Equivalent |
+| Voltage Angle (V_ANGLE) | ✅ | ⚠️ | Standalone type; ETAP may handle differently |
+| Voltage Phasor (V_PHASOR) | ✅ | ✅ | PMU support |
+| **Current Measurements** |
+| Current Magnitude (I_MAGNITUDE) | ✅ | ✅ | Equivalent |
+| Current Phasor (I_PHASOR) | ✅ | ✅ | PMU support |
+| **Artificial Measurements** |
+| Virtual Measurements | ✅ | ✅ | Zero injection constraints |
+| Pseudo Measurements | ⚠️ | ✅ | **Gap**: Limited support |
+| **Topology** |
+| Circuit Breaker Status | ✅ | ✅ | Handled via `CircuitBreaker` component (better design) |
+
+### Measurement Coverage Analysis
+
+#### ✅ **Fully Covered (100%)**
+- **Power Measurements**: All standard power flow and injection measurements
+- **Voltage Measurements**: Magnitude, angle, and PMU phasor support
+- **Current Measurements**: Magnitude and PMU phasor support
+- **Virtual Measurements**: Zero injection constraints for observability
+- **PMU Support**: Complete C37.118 implementation with synchronized phasors
+
+#### ⚠️ **Partially Covered**
+- **Pseudo Measurements**: 
+  - **This Project**: Uses pseudo measurements internally in `LoadFlow` (created from bus specifications), but lacks explicit support for historical data-based pseudo measurements
+  - **ETAP SLE**: Supports pseudo measurements based on historical data and typical load profiles
+  - **Impact**: Medium - Can be worked around by manually creating measurements from historical data, but not as convenient as ETAP's built-in support
+  - **Workaround**: Users can create `MeasurementModel` objects with values derived from historical data and add them to `TelemetryData`
+
+#### ✅ **Better Implementation**
+- **Circuit Breaker Status**: 
+  - **This Project**: Handled via dedicated `CircuitBreaker` component (separate from measurements)
+  - **ETAP SLE**: May treat breaker status as a measurement type
+  - **Advantage**: Cleaner separation of concerns, better type safety
+
+### Measurement Type Details
+
+**This Project Supports:**
+1. `P_FLOW` - Active power flow on branches
+2. `Q_FLOW` - Reactive power flow on branches
+3. `P_INJECTION` - Active power injection at buses
+4. `Q_INJECTION` - Reactive power injection at buses
+5. `V_MAGNITUDE` - Voltage magnitude at buses
+6. `I_MAGNITUDE` - Current magnitude on branches
+7. `V_ANGLE` - Voltage angle (standalone, useful for slack bus reference)
+8. `V_PHASOR` - Voltage phasor from PMUs (magnitude + angle)
+9. `I_PHASOR` - Current phasor from PMUs (magnitude + angle)
+
+**ETAP SLE Supports:**
+- All telemetry measurements (power flows, voltage magnitudes, current magnitudes)
+- Virtual measurements (zero injection constraints)
+- Pseudo measurements (historical data-based estimates)
+
+### Coverage Assessment
+
+**Overall Measurement Coverage: ~95%**
+
+- ✅ **Core Telemetry**: 100% coverage (all standard measurement types)
+- ✅ **PMU Measurements**: 100% coverage (complete C37.118 support)
+- ✅ **Virtual Measurements**: 100% coverage
+- ⚠️ **Pseudo Measurements**: ~50% coverage (internal use only, no historical data integration)
+- ✅ **Topology Status**: 100% coverage (better implementation via `CircuitBreaker`)
+
+### Recommendation
+
+**For Standard State Estimation**: ✅ **Fully Sufficient**
+- All essential measurement types are supported
+- PMU support is complete and superior to many implementations
+- Virtual measurements ensure observability
+
+**For Historical Data Integration**: ⚠️ **Requires Manual Work**
+- Pseudo measurements from historical data must be created manually
+- Can be implemented via user code that reads historical data and creates `MeasurementModel` objects
+- Not as convenient as ETAP's built-in historical data analysis
+
+**Conclusion**: The measurement coverage is **comprehensive for standard state estimation applications**. The only gap is explicit support for historical data-based pseudo measurements, which can be addressed through user code or future enhancements.
+
 ## Functional Comparison
 
 ### ✅ Implemented Features (Core Functionality)

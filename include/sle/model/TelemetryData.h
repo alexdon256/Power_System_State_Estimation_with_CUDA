@@ -90,6 +90,22 @@ public:
     // Get latest timestamp
     int64_t getLatestTimestamp() const { return latestTimestamp_; }
     
+    // OPTIMIZATION: GPU-friendly SoA (Structure of Arrays) access
+    // Returns pointers to contiguous arrays for efficient GPU transfer
+    // These arrays are cached in pinned memory for fast transfers
+    const Real* getMeasurementValuesArray() const;  // Returns pointer to z array
+    const Real* getStdDevArray() const;              // Returns pointer to stdDev array
+    const Real* getWeightsArray() const;             // Returns pointer to weights array (cached)
+    size_t getMeasurementArraySize() const;          // Returns size of arrays
+    
+    // OPTIMIZATION: Mark arrays as dirty when measurements change
+    // Forces rebuild of SoA arrays on next access
+    void markArraysDirty();
+    
+    // OPTIMIZATION: Build SoA arrays in pinned memory (GPU-friendly)
+    // Called automatically when arrays are accessed and dirty
+    void buildSoAArrays() const;
+    
     void clear();
     
 private:
@@ -121,6 +137,15 @@ private:
     
     // Ordered list of devices for stable iteration
     std::vector<MeasurementDevice*> orderedDevices_;
+    
+    // OPTIMIZATION: SoA (Structure of Arrays) layout for GPU-friendly access
+    // Stored in pinned memory for fast GPU transfers
+    mutable Real* h_pinned_z_;           // Pinned memory: measurement values
+    mutable Real* h_pinned_stdDev_;      // Pinned memory: standard deviations
+    mutable Real* h_pinned_weights_;     // Pinned memory: cached weights
+    mutable size_t soaArraySize_;        // Size of SoA arrays
+    mutable size_t soaArrayCapacity_;    // Capacity of SoA arrays
+    mutable bool soaArraysDirty_;        // Flag: arrays need rebuild
 };
 
 } // namespace model

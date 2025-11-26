@@ -9,10 +9,12 @@
 
 #include <sle/model/Bus.h>
 #include <sle/model/Branch.h>
+#include <sle/model/CircuitBreaker.h>
 #include <sle/Types.h>
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <functional>
 #include <sle/cuda/CudaPowerFlow.h>
 
 // Forward declaration
@@ -86,6 +88,21 @@ public:
     void removeBranch(BranchId id);
     void clear();
     
+    // Circuit breaker management
+    CircuitBreaker* addCircuitBreaker(const std::string& id, BranchId branchId, BusId fromBus, BusId toBus, const std::string& name = "");
+    CircuitBreaker* getCircuitBreaker(const std::string& id);
+    const CircuitBreaker* getCircuitBreaker(const std::string& id) const;
+    CircuitBreaker* getCircuitBreakerByBranch(BranchId branchId);
+    const CircuitBreaker* getCircuitBreakerByBranch(BranchId branchId) const;
+    std::vector<CircuitBreaker*> getCircuitBreakers();
+    std::vector<const CircuitBreaker*> getCircuitBreakers() const;
+    size_t getCircuitBreakerCount() const { return circuitBreakers_.size(); }
+    
+    // Set callback for topology change notifications (called when circuit breaker status changes)
+    // Callback signature: void()
+    using TopologyChangeCallback = std::function<void()>;
+    void setTopologyChangeCallback(TopologyChangeCallback callback) { topologyChangeCallback_ = callback; }
+    
     // Get index from bus ID
     Index getBusIndex(BusId id) const;
     Index getBranchIndex(BranchId id) const;
@@ -141,9 +158,12 @@ private:
     
     std::vector<std::unique_ptr<Bus>> buses_;
     std::vector<std::unique_ptr<Branch>> branches_;
+    std::vector<std::unique_ptr<CircuitBreaker>> circuitBreakers_;
     std::unordered_map<BusId, Index> busIndexMap_;
     std::unordered_map<BranchId, Index> branchIndexMap_;
     std::unordered_map<std::string, Index> busNameMap_;  // Name -> index mapping for O(1) lookup
+    std::unordered_map<std::string, Index> circuitBreakerIndexMap_;  // CB ID -> index mapping
+    std::unordered_map<BranchId, Index> branchToCircuitBreakerMap_;  // Branch ID -> CB index mapping
     
     // OPTIMIZATION: Fast branch lookup by (fromBus, toBus) pair (O(1) instead of O(avg_degree))
     // Key: pair<fromBus, toBus>, Value: branch index
@@ -156,8 +176,13 @@ private:
     };
     std::unordered_map<std::pair<BusId, BusId>, Index, BusPairHash> branchBusPairMap_;
     
+    TopologyChangeCallback topologyChangeCallback_;  // Called when circuit breaker status changes
+    
     Real baseMVA_;
     BusId referenceBus_;
+    
+    // Internal callback handler for circuit breaker status changes
+    void onCircuitBreakerStatusChanged(BranchId branchId, bool newStatus);
 };
 
 } // namespace model

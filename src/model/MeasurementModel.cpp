@@ -11,7 +11,8 @@ namespace sle {
 namespace model {
 
 MeasurementModel::MeasurementModel(MeasurementType type, Real value, Real stdDev)
-    : type_(type), value_(value), stdDev_(stdDev), device_(nullptr), timestamp_(0), globalIndex_(-1) {
+    : type_(type), value_(value), stdDev_(stdDev), device_(nullptr), timestamp_(0), globalIndex_(-1),
+      cachedWeight_(1.0 / (stdDev * stdDev)), weightDirty_(false) {
 }
 
 std::string MeasurementModel::getDeviceId() const {
