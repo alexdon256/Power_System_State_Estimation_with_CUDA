@@ -39,15 +39,6 @@ void buildCSRAdjacencyLists(const model::NetworkModel& network,
                             std::vector<Index>& branchToBus,
                             std::vector<Index>& branchToBusRowPtr);
 
-// GPU-accelerated CSR adjacency list building (eliminates CPU-GPU transfer)
-// Builds CSR format directly on GPU from DeviceBranch array
-// Returns true on success, false on failure
-bool buildCSRAdjacencyListsGPU(
-    const DeviceBranch* d_branches,
-    Index* d_branchFromBus, Index* d_branchToBus,
-    Index* d_branchFromBusRowPtr, Index* d_branchToBusRowPtr,
-    Index nBranches, Index nBuses,
-    cudaStream_t stream = nullptr);
 
 // Map MeasurementType enum to index (0-5)
 Index mapMeasurementTypeToIndex(MeasurementType type);
