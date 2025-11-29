@@ -329,6 +329,9 @@ void NetworkModel::removeBus(BusId id) {
         busIndexMap_.erase(it);
         
         // Update indices for all buses after the removed one (indices shifted down by 1)
+        #ifdef USE_OPENMP
+        #pragma omp parallel for
+        #endif
         for (size_t i = idx; i < buses_.size(); ++i) {
             BusId busId = buses_[i]->getId();
             busIndexMap_[busId] = static_cast<Index>(i);

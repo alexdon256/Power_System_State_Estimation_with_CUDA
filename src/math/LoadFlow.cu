@@ -170,6 +170,9 @@ void LoadFlow::computeMismatches(const model::NetworkModel& network, const model
     modNetwork.computePowerInjections(state);
     
     const auto& buses = network.getBuses();
+    #ifdef USE_OPENMP
+    #pragma omp parallel for
+    #endif
     for (size_t i = 0; i < nBuses; ++i) {
         const auto* bus = buses[i];
         if (!bus) continue;

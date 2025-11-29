@@ -48,6 +48,9 @@ RobustEstimator::RobustResult RobustEstimator::solveIRLS(
     // OPTIMIZATION: Pre-compute base weights and stdDevs once (loop invariants)
     std::vector<Real> baseWeights(nMeas);
     std::vector<Real> stdDevs(nMeas);
+    #ifdef USE_OPENMP
+    #pragma omp parallel for
+    #endif
     for (size_t i = 0; i < nMeas; ++i) {
         baseWeights[i] = measurements[i]->getWeight();
         stdDevs[i] = measurements[i]->getStdDev();

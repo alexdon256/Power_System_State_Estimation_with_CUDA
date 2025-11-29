@@ -110,6 +110,9 @@ void StateVector::initializeFromNetwork(const NetworkModel& network) {
     resize(n);
     
     auto buses = network.getBuses();
+    #ifdef USE_OPENMP
+    #pragma omp parallel for
+    #endif
     for (size_t i = 0; i < buses.size(); ++i) {
         magnitudes_[i] = buses[i]->getVoltageMagnitude();
         angles_[i] = buses[i]->getVoltageAngle();
